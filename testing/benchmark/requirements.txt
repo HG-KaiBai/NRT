@@ -1,0 +1,2 @@
+lifelines==0.30.3
+Optunity==1.1.1

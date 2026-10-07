@@ -1,0 +1,2 @@
+method,case_id,tau,right_censoring_rate,cv_metric,cv_score,average_grid_sse
+NRT_Brier,lognormal_current_q0.2,3.1234899682837227,0.19259999692440033,brier,0.15251946076750755,0.688284158706665

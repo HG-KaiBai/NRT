@@ -1,0 +1,2 @@
+method,case_id,tau,right_censoring_rate,cv_metric,cv_score,average_grid_sse
+DeepSurv,ph_right_q0.2,4.574094667177786,0.19820000231266022,c_index,0.621280128892334,0.20410838723182678

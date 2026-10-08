@@ -6,7 +6,7 @@ Each NRT loss tunes 35 cases: five exact cases and 30 censored cases. NNCDE and 
 
 Submit `tune_nrt.sh`, `tune_nncde.sh`, and `tune_deepsurv.sh`. NRT tunes each loss separately by exhaustive grid search; NNCDE retains its grid/NLL selection and DeepSurv its Sobol/concordance selection. All use an 80/20 outer split and four folds in the training partition. Results and the numeric censoring horizon are consumed directly by `../testing/simulation.py`.
 
-NRT_NLL selects the lowest mean validation NLL. NRT_Brier and NRT_2Loss select the lowest mean validation Brier score. Results record these criteria as `cv_metric=nll` or `brier`. Tuning resumption and summarization require the recorded criterion to match the method.
+NRT_NLL and NRT_2Loss select the lowest mean validation NLL. NRT_Brier selects the lowest mean validation Brier score. Each CV fit uses its existing validation fold for early stopping, retaining all three training folds. Final fits split their available training data 80/20 for optimization and validation, and restore the checkpoint with the lowest validation loss. Results record these criteria as `cv_metric=nll` or `brier`. Tuning resumption and summarization require the recorded criterion to match the method.
 
 NRT submits 105 GPU array tasks, with 35 concurrent tasks per loss. NNCDE and DeepSurv each submit 15 tasks containing only their supported exact/right-censored cases. Every worker owns one GPU and performs all CV fits for one model/case. NRT task IDs 0–34, 35–69, and 70–104 select NRT_NLL, NRT_Brier, and NRT_2Loss respectively. Case positions follow `--list-cases` for that method, starting at zero. Each benchmark has three cases per data setting, ordered exact, right q=0.2, right q=0.5. Filters retain these task IDs.
 

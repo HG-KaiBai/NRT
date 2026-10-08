@@ -8,6 +8,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from ...validation import training_validation_split
+
 
 class _DDRNetwork(nn.Module):
     def __init__(self, input_dim: int, hidden_nodes: int, n_bins: int, dropout: float) -> None:
@@ -47,7 +49,7 @@ class DeepDistributionRegression:
         batch_size: int = 32,
         epochs: int = 100,
         patience: int = 20,
-        validation_fraction: float = 0.05,
+        validation_fraction: float = 0.20,
         support_margin: float = 0.05,
         seed: int = 123,
         device: str | torch.device | None = None,
@@ -56,8 +58,8 @@ class DeepDistributionRegression:
             raise ValueError("cut_fraction must be in (0, 1)")
         if n_cutpoints is not None and n_cutpoints < 1:
             raise ValueError("n_cutpoints must be positive")
-        if not 0.0 < validation_fraction < 0.5:
-            raise ValueError("validation_fraction must be in (0, 0.5)")
+        if validation_fraction != 0.20:
+            raise ValueError("validation_fraction must be 0.20 for the 80/20 training split")
         self.cut_fraction = cut_fraction
         self.n_cutpoints = n_cutpoints
         self.hidden_nodes = hidden_nodes
@@ -99,6 +101,7 @@ class DeepDistributionRegression:
         R: torch.Tensor,
         *,
         censor_type: str,
+        validation_data=None,
     ) -> "DeepDistributionRegression":
         x = x.detach().to(self.device, dtype=torch.float32)
         y = self._exact_response(
@@ -112,10 +115,20 @@ class DeepDistributionRegression:
             raise ValueError("at least four training rows are required")
 
         generator = torch.Generator(device="cpu").manual_seed(self.seed)
-        order = torch.randperm(x.shape[0], generator=generator)
-        validation_size = max(1, round(x.shape[0] * self.validation_fraction))
-        validation_indices = order[:validation_size].to(self.device)
-        training_indices = order[validation_size:].to(self.device)
+        if validation_data is None:
+            training_indices, validation_indices = training_validation_split(
+                len(x), seed=self.seed, device=self.device,
+            )
+        else:
+            valid_x, valid_L, valid_R = (
+                values.detach().to(self.device, dtype=torch.float32) for values in validation_data
+            )
+            valid_y = self._exact_response(valid_L, valid_R, censor_type)
+            training_indices = torch.arange(len(x), device=self.device)
+            validation_indices = torch.arange(len(x), len(x) + len(valid_x), device=self.device)
+            x, y = torch.cat((x, valid_x)), torch.cat((y, valid_y))
+        if not validation_indices.numel():
+            raise ValueError("the validation dataset cannot be empty")
         if training_indices.numel() < 2:
             raise ValueError("validation split leaves too few training rows")
 

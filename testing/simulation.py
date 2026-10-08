@@ -21,7 +21,7 @@ import torch
 from testing.benchmark.deepsurv.cuda_model import PAPER_GAUSSIAN_FIXED_PARAMETERS
 from workflow import (
     ROOT, SCHEMA_VERSION, DEFAULT_EPOCHS, ALL_CASES, CPU_METHODS, METHODS, NRT_LOSSES, SUPPORTED, atomic_json,
-    node_preflight, close_model, evaluate, fingerprint, fit_model, generate,
+    FIT_POLICY, node_preflight, close_model, evaluate, fingerprint, fit_model, generate,
     select_cases, select_methods, write_csv,
 )
 
@@ -124,6 +124,7 @@ def load_spec(args, method, case):
         else:
             training = {name: value for name, value in PAPER_GAUSSIAN_FIXED_PARAMETERS.items()
                         if name not in parameters}
+            training['patience'] = 20
         source_hash = fingerprint(tuned)
     else:
         manifest = cpu_case_manifest(args, case)
@@ -149,6 +150,8 @@ def make_job(args, method, case, replication, spec):
                    replication=replication, data_seed=seed, n_samples=args.n_samples,
                    grid_size=args.grid_size, tau=manifest['tau'], mu=manifest['mu'], r=manifest['r'],
                    parameters=parameters, training_config=training, tuning_hash=source_hash)
+    if method in (*NRT_LOSSES, 'NNCDE', 'DeepSurv', 'deep_distribution_regression'):
+        request['fit_policy'] = FIT_POLICY
     return dict(request=request, request_hash=fingerprint(request), case=case,
                 output=result_path(args.output_dir, method, case, replication),
                 device=args.device, threads=args.threads_per_fit, force=args.force)

@@ -16,6 +16,6 @@ Each table contains a `replication` index and one column per applicable method, 
 
 NRT and NNCDE fits use 200 epochs by default; NRT uses learning rate 0.001. DeepSurv uses 1,000 epochs and `PAPER_GAUSSIAN_PARAMETERS` defaults for settings absent from its CSV. Saved CSV parameters are retained. Override epochs with `--epochs ...`. For tuning grid changes, see [the tuning guide](../tuning/README.md).
 
-The single-fit notebooks and model implementations remain available. Choose `joint_nll`, `joint_brier`, or `alternating` for NRT. `testdata2.md` describes the distributions and observation process.
+The single-fit notebooks and model implementations remain available. Choose `joint_nll`, `joint_brier`, or `alternating` for NRT. Each neural fit uses an 80/20 split of its available training data and restores the best validation checkpoint. Alternating NRT monitors validation NLL; joint modes monitor their corresponding validation loss. DeepSurv monitors validation negative Cox partial log-likelihood, DDR monitors validation JBCE, and each NNCDE cross-fit network uses validation NLL. The final test partition stays separate. `testdata2.md` describes the distributions and observation process.
 
 Startup checks and requeue are described in [the workflow guide](../README.md#node-checks-and-requeue). All launchers enable requeue and append logs; node checks run before fits or CPU workers begin.

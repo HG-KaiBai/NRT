@@ -55,3 +55,9 @@ or right-censored observations on CUDA when available. Set
 
 The code uses the normal project environment; no separate Theano environment
 or subprocess backend is required.
+
+Every CV fit uses its existing validation fold for early stopping. Outside CV,
+each fit splits its available data into 80% training and 20% validation, monitors
+validation negative Cox partial log-likelihood, and restores the best checkpoint.
+The default patience is 20 epochs. Preprocessing and the Breslow baseline use
+only optimization rows; the final test set stays separate.

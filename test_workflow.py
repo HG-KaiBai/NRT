@@ -167,14 +167,14 @@ class DataWorkflowTests(unittest.TestCase):
 
 
 class TuningSelectionTests(unittest.TestCase):
-    def test_cv_chooses_nll_optimum_for_nrt_nll_and_brier_for_other_losses(self):
+    def test_cv_chooses_nll_for_joint_nll_and_alternating_and_brier_for_joint_brier(self):
         # Deliberately give NLL and Brier different optimal configurations.
         data = w.generate(w.Case('ph', 'exact', 0.2), 32, 123, None)
         candidates = [dict(depth=2), dict(depth=3)]
-        for method, depth, metric in (('NRT_NLL', 2, 'nll'), ('NRT_Brier', 3, 'brier'), ('NRT_2Loss', 3, 'brier')):
+        for method, depth, metric in (('NRT_NLL', 2, 'nll'), ('NRT_Brier', 3, 'brier'), ('NRT_2Loss', 2, 'nll')):
             with self.subTest(method=method), tempfile.TemporaryDirectory() as directory:
                 args = tune.parser().parse_args(['--method', 'NRT', '--epochs', '2', '--device', 'cpu'])
-                with patch.object(tune, 'fit_model', side_effect=lambda method, data, train, parameters, *rest: parameters), \
+                with patch.object(tune, 'fit_model', side_effect=lambda method, data, train, parameters, *rest, **kwargs: parameters), \
                      patch('tuning.train_mlp.evaluate_nll', side_effect=lambda model, *rest: 1.0 if model['depth'] == 2 else 9.0), \
                      patch('tuning.train_mlp.evaluate_brier', side_effect=lambda model, *rest: 9.0 if model['depth'] == 2 else 1.0), \
                      redirect_stdout(io.StringIO()):
@@ -285,7 +285,7 @@ class TuningArrayTests(unittest.TestCase):
             def save_result(args, method, case, candidates):
                 w.atomic_json(root / method / case.id / 'result.json', dict(
                     method=method, case_id=case.id, tau=None, right_censoring_rate=0,
-                    cv_metric='nll' if method == 'NRT_NLL' else 'brier', cv_score=0.2, average_grid_sse=1.0,
+                    cv_metric=tune.CV_METRICS[method], cv_score=0.2, average_grid_sse=1.0,
                     parameters={'depth': 6, 'shared_layers': 2}))
 
             with patch.object(tune, 'tune_case', side_effect=save_result) as fit, \

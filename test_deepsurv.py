@@ -69,12 +69,17 @@ class DeepSurvPaperTests(unittest.TestCase):
                     with patch.object(model, '_train_network', wraps=model._train_network) as train:
                         model.fit(*data.bounds(data.train), censor_type='exact')
                     self.assertEqual(train.call_count, 2 * 4 + 1)
-                    for call in train.call_args_list:
+                    for index, call in enumerate(train.call_args_list):
                         configuration = call.args[3]
                         for name in ('activation', 'batch_norm', 'standardize'):
                             self.assertEqual(getattr(configuration, name),
                                              PAPER_GAUSSIAN_PARAMETERS[name])
                         self.assertEqual(call.kwargs['epochs'], 1)
+                        if index < train.call_count - 1:
+                            self.assertEqual(len(call.args[0]), 24)
+                            self.assertEqual(len(call.kwargs['validation_data'][0]), 8)
+                        else:
+                            self.assertIsNone(call.kwargs['validation_data'])
                     self.assertEqual(model.optimizer, 'adam')
                     self.assertEqual(model.l1_reg, 0.0)
                     self.assertEqual(model.tuning_parameters['selection_metric'],
@@ -106,7 +111,7 @@ class DeepSurvPaperTests(unittest.TestCase):
 
     def test_tuning_and_simulation_use_same_fixed_settings_and_selected_values(self):
         args = tune.parser().parse_args(['--method', 'DeepSurv'])
-        self.assertEqual(tune.training_config(args, 'DeepSurv'), PAPER_GAUSSIAN_FIXED_PARAMETERS)
+        self.assertEqual(tune.training_config(args, 'DeepSurv'), {**PAPER_GAUSSIAN_FIXED_PARAMETERS, 'patience': 20})
         self.assertEqual(w.DEFAULT_EPOCHS['DeepSurv'], PAPER_GAUSSIAN_PARAMETERS['epochs'])
         case = w.Case('ph', 'exact', 0.2)
         with tempfile.TemporaryDirectory() as directory:
@@ -122,7 +127,7 @@ class DeepSurvPaperTests(unittest.TestCase):
             self.assertEqual(result['request']['search_ranges'],
                              OFFICIAL_TUNING_PARAMETERS['reference_search']['ranges'])
             self.assertEqual(result['cv_metric'], 'c_index')
-            self.assertEqual(result['training_config'], {**PAPER_GAUSSIAN_FIXED_PARAMETERS, 'epochs': 1})
+            self.assertEqual(result['training_config'], {**PAPER_GAUSSIAN_FIXED_PARAMETERS, 'epochs': 1, 'patience': 20})
             with redirect_stdout(io.StringIO()):
                 tune.write_summary(args, [('DeepSurv', case)])
             testing_args = sim.parser().parse_args([
@@ -132,6 +137,7 @@ class DeepSurvPaperTests(unittest.TestCase):
             spec = sim.load_spec(testing_args, 'DeepSurv', case)
             expected_training = {name: value for name, value in PAPER_GAUSSIAN_FIXED_PARAMETERS.items()
                                  if name not in result['parameters']}
+            expected_training['patience'] = 20
             self.assertEqual(spec[2], expected_training)
             for name in TUNABLE_PARAMETER_NAMES:
                 self.assertEqual(spec[1][name], result['parameters'][name])
@@ -177,6 +183,7 @@ class DeepSurvPaperTests(unittest.TestCase):
             self.assertEqual(parameters, saved)
             defaults = {name: value for name, value in PAPER_GAUSSIAN_FIXED_PARAMETERS.items()
                         if name not in saved}
+            defaults['patience'] = 20
             self.assertEqual(training, defaults)
             args.epochs = 2
             self.assertEqual(sim.load_spec(args, 'DeepSurv', case)[2],

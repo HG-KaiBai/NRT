@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
+from ...validation import training_validation_split
+
 
 class _LogHazardNetwork(nn.Module):
     def __init__(self, input_dim: int, hidden_nodes: int) -> None:
@@ -137,11 +139,21 @@ class NNCDE:
         x_train: torch.Tensor,
         observed_train: torch.Tensor,
         event_train: torch.Tensor,
-        x_valid: torch.Tensor,
-        observed_valid: torch.Tensor,
-        event_valid: torch.Tensor,
         seed: int,
+        validation_data=None,
     ) -> _FittedNetwork:
+        if validation_data is None:
+            training, validation = training_validation_split(len(x_train), seed=seed, device=self.device)
+            x_valid, observed_valid, event_valid = (
+                values[validation] for values in (x_train, observed_train, event_train)
+            )
+            x_train, observed_train, event_train = (
+                values[training] for values in (x_train, observed_train, event_train)
+            )
+        else:
+            x_valid, observed_valid, event_valid = validation_data
+        if len(x_valid) < 1:
+            raise ValueError("the validation dataset cannot be empty")
         torch.manual_seed(seed)
         expanded = self._expanded_inputs(x_train, observed_train)
         input_mean = expanded.mean(dim=0)
@@ -209,11 +221,19 @@ class NNCDE:
         R: torch.Tensor,
         *,
         censor_type: str,
+        validation_data=None,
     ) -> "NNCDE":
+        """Cross-fit two networks, using the CV fold or an 80/20 split within each half."""
         x = x.detach().to(self.device, dtype=torch.float32)
         L = L.detach().to(self.device, dtype=torch.float32)
         R = R.detach().to(self.device, dtype=torch.float32)
         observed, event = self._outcomes(L, R, censor_type)
+        if validation_data is not None:
+            valid_x, valid_L, valid_R = (
+                values.detach().to(self.device, dtype=torch.float32) for values in validation_data
+            )
+            valid_observed, valid_event = self._outcomes(valid_L, valid_R, censor_type)
+            validation_data = valid_x, valid_observed, valid_event
         if x.ndim != 2 or observed.ndim != 1 or x.shape[0] != observed.numel():
             raise ValueError("x must be 2-D and bounds must have one value per row")
         if x.shape[0] < 4:
@@ -227,11 +247,13 @@ class NNCDE:
         self._models = [
             self._train_one(
                 x[first], observed[first], event[first],
-                x[second], observed[second], event[second], self.seed,
+                self.seed,
+                validation_data,
             ),
             self._train_one(
                 x[second], observed[second], event[second],
-                x[first], observed[first], event[first], self.seed + 1,
+                self.seed + 1,
+                validation_data,
             ),
         ]
         return self

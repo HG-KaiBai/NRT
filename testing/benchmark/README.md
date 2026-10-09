@@ -61,9 +61,8 @@ nodes. These controls can be overridden in the notebook's model constructor.
 
 NNCDE follows the paper/reference code: two 64-unit ReLU hidden layers,
 piecewise full-likelihood hazard estimation, Adam, early stopping after ten
-non-improving validation epochs, two-way cross-fitting, and averaging
-the two survival estimates. Each network uses the supplied CV validation fold
-for stopping, or an 80/20 split within its training half outside CV.
+non-improving validation epochs, a 1:1 split, reverse refitting, and averaging
+the two survival estimates.
 
 Deep Distribution Regression uses three 100-unit ELU/BatchNorm layers, 50%
 dropout, softmax bin probabilities, cumulative probabilities trained with the
@@ -109,10 +108,7 @@ risks into survival curves for the shared `average_grid_sse` evaluation. The
 notebook uses `MULTIMODAL_CASE="separate"` or `"closer"` for the two scale cases.
 
 Setting `DEEPSURV_CUDA_TUNE=True` executes every Sobol cross-validation fit on the selected
-PyTorch device, using each CV validation fold for early stopping. The final
-fit uses an 80/20 split of the available training rows and restores the best
-validation checkpoint. DeepSurv stops on validation negative Cox partial
-log-likelihood; its hyperparameter search still selects by concordance.
+PyTorch device and then refits the selected configuration on all training rows.
 
 ## Sources
 

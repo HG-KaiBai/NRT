@@ -21,19 +21,19 @@ from tuning.benchmark.deepsurv.cuda_model import (
     OFFICIAL_TUNING_PARAMETERS, PAPER_GAUSSIAN_FIXED_PARAMETERS,
 )
 from workflow import (
-    ROOT, SCHEMA_VERSION, ALL_CASES, DEFAULT_EPOCHS, FIT_POLICY, NRT_LOSSES, SUPPORTED, atomic_json, node_preflight, close_model,
+    ROOT, SCHEMA_VERSION, ALL_CASES, DEFAULT_EPOCHS, NRT_LOSSES, SUPPORTED, atomic_json, node_preflight, close_model,
     cv_splits, evaluate, fingerprint, fit_model, generate, horizon, nncde_nll, select_cases,
     write_csv,
 )
 
 # Explicit grid choices. Edit here or supply --search-space with a JSON file.
 NRT_SEARCH_SPACE = {
-    'depth': [4, 6, 8], 'h_dim': [8, 16, 32], 'mlp_hidden': [8, 16, 32],
+    'depth': [7, 8], 'h_dim': [8, 16, 32], 'mlp_hidden': [8, 16, 32],
     'mlp_layers': [1, 2, 3], 'shared_layers': [1, 2, 3],
 }
 NNCDE_GRID = {'hidden_nodes': [64, 128, 256],
               'learning_rate': [0.01, 0.001, 0.0001], 'batch_size': [64, 128, 256]}
-CV_METRICS = {'NRT_NLL': 'nll', 'NRT_Brier': 'brier', 'NRT_2Loss': 'nll',
+CV_METRICS = {'NRT_NLL': 'nll', 'NRT_Brier': 'brier', 'NRT_2Loss': 'brier',
               'NNCDE': 'nll', 'DeepSurv': 'c_index'}
 
 
@@ -77,7 +77,6 @@ def training_config(args, method):
     if method == 'NNCDE':
         return dict(epochs=args.epochs, patience=args.patience)
     return {**PAPER_GAUSSIAN_FIXED_PARAMETERS,
-            'patience': args.patience,
             'epochs': args.epochs if args.epochs is not None else DEFAULT_EPOCHS['DeepSurv']}
 
 
@@ -189,9 +188,8 @@ def tune_cv(args, method, data, candidates, output):
             error = ''
             try:
                 model = fit_model(method, data, train, parameters, training, args.device,
-                                  args.tune_seed + (trial - 1) * len(folds) + fold, 'tuning',
-                                  validation_indices=valid)
-                if method in NRT_LOSSES and metric == 'nll':
+                                  args.tune_seed + (trial - 1) * 4 + fold, 'tuning')
+                if method == 'NRT_NLL':
                     score = evaluate_nll(model, *data.bounds(valid), args.device)
                 elif method in NRT_LOSSES:
                     score = evaluate_brier(model, *data.bounds(valid), args.grid_size, args.device)
@@ -228,7 +226,6 @@ def tune_case(args, method, case, candidates):
                    seed=data_seed, tune_seed=args.tune_seed, n_samples=args.n_samples,
                    mu=args.mu, r=args.r, tau=tau, cv_folds=4, grid_size=args.grid_size,
                    candidates=candidates,
-                   fit_policy=FIT_POLICY,
                    tuning_evals=len(candidates) if method in NRT_LOSSES else args.tuning_evals,
                    training_config=training_config(args, method), split_min=args.split_min)
     if method == 'DeepSurv':

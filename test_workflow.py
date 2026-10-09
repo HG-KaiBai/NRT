@@ -167,20 +167,21 @@ class DataWorkflowTests(unittest.TestCase):
 
 
 class TuningSelectionTests(unittest.TestCase):
-    def test_cv_chooses_nll_optimum_for_nrt_nll_and_brier_for_other_losses(self):
+    def test_cv_chooses_brier_optimum_for_all_nrt_losses(self):
         # Deliberately give NLL and Brier different optimal configurations.
         data = w.generate(w.Case('ph', 'exact', 0.2), 32, 123, None)
         candidates = [dict(depth=2), dict(depth=3)]
-        for method, depth, metric in (('NRT_NLL', 2, 'nll'), ('NRT_Brier', 3, 'brier'), ('NRT_2Loss', 3, 'brier')):
+        for method in ('NRT_NLL', 'NRT_Brier', 'NRT_2Loss'):
             with self.subTest(method=method), tempfile.TemporaryDirectory() as directory:
                 args = tune.parser().parse_args(['--method', 'NRT', '--epochs', '2', '--device', 'cpu'])
                 with patch.object(tune, 'fit_model', side_effect=lambda method, data, train, parameters, *rest: parameters), \
-                     patch('tuning.train_mlp.evaluate_nll', side_effect=lambda model, *rest: 1.0 if model['depth'] == 2 else 9.0), \
+                     patch('tuning.train_mlp.evaluate_nll', side_effect=lambda model, *rest: 1.0 if model['depth'] == 2 else 9.0) as nll, \
                      patch('tuning.train_mlp.evaluate_brier', side_effect=lambda model, *rest: 9.0 if model['depth'] == 2 else 1.0), \
                      redirect_stdout(io.StringIO()):
                     parameters, training, score, selected_metric = tune.tune_cv(args, method, data, candidates, Path(directory))
-                self.assertEqual(parameters['depth'], depth)
-                self.assertEqual((score, selected_metric), (1.0, metric))
+                self.assertEqual(parameters['depth'], 3)
+                self.assertEqual((score, selected_metric), (1.0, 'brier'))
+                nll.assert_not_called()
 
     def test_tuning_result_with_wrong_metric_requires_retuning(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -189,21 +190,21 @@ class TuningSelectionTests(unittest.TestCase):
             case = w.Case('ph', 'exact', 0.2)
             candidates = [dict(depth=2)]
             training = tune.training_config(args, 'NRT_NLL')
-            with patch.object(tune, 'tune_cv', return_value=({'depth': 2}, training, 1.0, 'nll')), \
+            with patch.object(tune, 'tune_cv', return_value=({'depth': 2}, training, 1.0, 'brier')), \
                  patch.object(tune, 'fit_model', return_value=object()), \
                  patch.object(tune, 'evaluate', return_value={'average_grid_sse': 1.0}), redirect_stdout(io.StringIO()):
                 tune.tune_case(args, 'NRT_NLL', case, candidates)
             path = args.output_dir / 'NRT_NLL' / case.id / 'result.json'
             result = json.loads(path.read_text())
-            result['cv_metric'] = 'c_index'
+            result['cv_metric'] = 'nll'
             w.atomic_json(path, result)
             jobs = [('NRT_NLL', case)]
             with patch.object(tune, 'fit_model', side_effect=AssertionError('Unexpected fitting')):
-                with self.assertRaisesRegex(ValueError, "expected 'nll'"):
+                with self.assertRaisesRegex(ValueError, "expected 'brier'"):
                     tune.tune_case(args, 'NRT_NLL', case, candidates)
-                with self.assertRaisesRegex(ValueError, "expected 'nll'"):
+                with self.assertRaisesRegex(ValueError, "expected 'brier'"):
                     tune.write_summary(args, jobs)
-                result['cv_metric'] = 'nll'
+                result['cv_metric'] = 'brier'
                 w.atomic_json(path, result)
                 with redirect_stdout(io.StringIO()) as output:
                     tune.tune_case(args, 'NRT_NLL', case, candidates)
@@ -285,7 +286,7 @@ class TuningArrayTests(unittest.TestCase):
             def save_result(args, method, case, candidates):
                 w.atomic_json(root / method / case.id / 'result.json', dict(
                     method=method, case_id=case.id, tau=None, right_censoring_rate=0,
-                    cv_metric='nll' if method == 'NRT_NLL' else 'brier', cv_score=0.2, average_grid_sse=1.0,
+                    cv_metric='brier', cv_score=0.2, average_grid_sse=1.0,
                     parameters={'depth': 6, 'shared_layers': 2}))
 
             with patch.object(tune, 'tune_case', side_effect=save_result) as fit, \

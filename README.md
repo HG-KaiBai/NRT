@@ -2,6 +2,8 @@
 
 This repository selects hyperparameters for three NRT training variants and neural benchmarks, then compares the fitted methods on fresh simulation datasets. The workflow requirements are recorded in [reademe.md](reademe.md); the algorithms below describe the current implementation in [workflow.py](workflow.py), [tuning/main.py](tuning/main.py), and [testing/simulation.py](testing/simulation.py). Defaults are 5,000 observations per dataset, an 80/20 train/test split, four tuning folds, 500 testing replications, and 256 evaluation grid points.
 
+To recreate the installed Python and R environments on another server, use the prompt and captured package manifests in [ENVIRONMENT_REPLICATION.md](ENVIRONMENT_REPLICATION.md).
+
 There are 35 cases across five data settings:
 
 - `ph`, `lognormal`, `po`, `multimodal_separate`, `multimodal_closer`;
@@ -30,7 +32,7 @@ Observations enter fitting as `(X, L, R)`: exact events have `L=R=T`, right-cens
 
 | Variant | Updates within each minibatch | Early-stopping monitor | CV selection criterion |
 | --- | --- | --- | --- |
-| `NRT_NLL` (`joint_nll`) | Update both branches and the shared encoder using observed-data NLL | Training NLL | Lowest mean validation NLL |
+| `NRT_NLL` (`joint_nll`) | Update both branches and the shared encoder using observed-data NLL | Training NLL | Lowest mean validation Brier score |
 | `NRT_Brier` (`joint_brier`) | Update both branches and the shared encoder using expected integrated Brier loss | Training Brier loss | Lowest mean validation Brier score |
 | `NRT_2Loss` (`alternating`) | Update `m` with NLL while detaching `rho`; recompute predictions, then update `rho` with Brier loss while detaching `m` | Training `rho_brier` loss | Lowest mean validation Brier score |
 
@@ -45,7 +47,7 @@ Workflow defaults for all three variants are AdamW, shuffled minibatches of 256,
 1. **Generate shared tuning data.** For a censored case, calibrate the population horizon `tau` so independent follow-up `C ~ Uniform(0, tau)` gives `P(T>C)=q`. Generate 5,000 observations using `seed + case.index * 10_000` (default base seed 123), and split them into 4,000 training and 1,000 held-out test observations. Exact cases use `tau=null`. Save the case manifest and realized rates `mean(R == inf)`; finite-sample rates can differ from q. Methods share the same case data and split.
 2. **Enumerate configurations.** For each NRT loss, evaluate the Cartesian product of `depth=[7,8]`, `h_dim=[8,16,32]`, `mlp_hidden=[8,16,32]`, `mlp_layers=[1,2,3]`, and `shared_layers=[1,2,3]`. This gives 162 configurations in deterministic order. `--search-space` can replace these lists; the full grid is always evaluated.
 3. **Fit and score four folds.** Shuffle the 4,000 training indices with the tuning seed (default 321), then rotate through four folds. For each configuration/fold, initialize a fresh model, fit on 3,000 observations using that variant's training algorithm, and score the remaining 1,000. Fit preprocessing and support bounds using only fold-training observations. The held-out tuning test set remains unused.
-4. **Select and refit.** Average the four validation scores and select the lowest NLL for NRT_NLL or lowest Brier score for NRT_Brier/NRT_2Loss. A configuration is eligible only if all four folds succeed with finite scores; the first configuration wins a tie. Fit a fresh model with the selected configuration on all 4,000 training observations, then evaluate on the held-out 1,000. Each loss/case therefore requires 648 CV fits plus one final fit by default.
+4. **Select and refit.** Average the four validation Brier scores and select the lowest mean for every NRT variant, including NRT_NLL, which retains NLL training. A configuration is eligible only if all four folds succeed with finite scores; the first configuration wins a tie. Fit a fresh model with the selected configuration on all 4,000 training observations, then evaluate on the held-out 1,000. Each loss/case therefore requires 648 CV fits plus one final fit by default.
 5. **Save and export.** Write candidate/fold scores to `cv_results.csv` and the selected parameters, training settings, CV score, held-out metrics, and data metadata to `result.json`. Once all requested cases for a method finish, automatically export its metric summary and `tuning/output/hyper_para/<method>.csv`. Each NRT loss exports independently; the combined NRT summary follows when all selected losses finish. One GPU worker owns each loss/case and runs its candidates/folds sequentially.
 
 NNCDE uses the same outer split and four-fold selection pattern with its 27-configuration grid and validation NLL, retaining internal two-way cross-fitting. DeepSurv uses 50 Optunity Sobol candidate evaluations and maximizes four-fold validation Harrell C-index. Their supported cases and search settings are listed below.
@@ -98,7 +100,7 @@ Task IDs use the supported case order printed by `--list-cases` for that method,
 
 Every case uses one generated dataset and four-fold CV within its 80% training partition. All methods share the same case data and outer split. Model support bounds and preprocessing in each CV fit use only that fold's training observations. The held-out 20% is evaluated only after parameter selection.
 
-- NRT grid search evaluates the complete Cartesian grid for each loss separately, in a deterministic order. NRT_NLL selects the lowest mean validation NLL; NRT_Brier and NRT_2Loss select the lowest mean validation Brier score. Edit `NRT_SEARCH_SPACE` in `tuning/main.py` or use `--search-space file.json`. Explicit choices currently use depth `[7, 8]`, h_dim and mlp_hidden `[8, 16, 32]`, and mlp_layers and shared_layers `[1, 2, 3]`. This grid has 162 configurations. The learning rate is 0.001, split_min is 0.1, dropout is zero, and the epoch limit is 200.
+- NRT grid search evaluates the complete Cartesian grid for each loss separately, in a deterministic order. All three variants select the lowest mean validation Brier score; NRT_NLL retains its joint NLL training objective. Edit `NRT_SEARCH_SPACE` in `tuning/main.py` or use `--search-space file.json`. Explicit choices currently use depth `[7, 8]`, h_dim and mlp_hidden `[8, 16, 32]`, and mlp_layers and shared_layers `[1, 2, 3]`. This grid has 162 configurations. The learning rate is 0.001, split_min is 0.1, dropout is zero, and the epoch limit is 200.
 - NNCDE retains the previous exhaustive grid: hidden_nodes 64/128/256, learning_rate 0.01/0.001/0.0001, batch_size 64/128/256. It selects validation NLL, retaining the estimator's internal two-way cross-fitting. The epoch limit is 200. A search-space JSON supplies lists of choices for these three fields.
 - DeepSurv retains the existing Optunity Sobol search, parameter ranges, and validation concordance criterion, with four folds and 50 evaluations. Settings outside the search come from `PAPER_GAUSSIAN_PARAMETERS`: SELU, no batch normalization, no standardization, zero L1 penalty, Adam, and 1,000 epochs for both CV and the final fit.
 
@@ -144,7 +146,7 @@ PY=${PY:-/home/y679zhao/envs/pt/bin/python3.14}
 
 Use matching `--output-dir`, `--cases`, and `--nrt-methods` arguments for a subset run. Manual summarization requires all requested applicable results. Automatic checks leave existing tables untouched until the selection is complete and publish complete tables atomically. A filtered run replaces tables of the same name with that selection; use separate output directories to retain summaries for different selections. Testing reads the exported hyperparameter CSVs. Summaries and examples of their columns are described below.
 
-NRT_NLL tuning resumption and summarization require `cv_metric=nll`. Results with a different CV metric must be retuned. Retune only NRT_NLL with `sbatch --array=0-34%35 tuning/tune_nrt.sh --nrt-methods NRT_NLL --force`, or use a new output directory.
+NRT_NLL tuning resumption and summarization require `cv_metric=brier`. Previous results selected by validation NLL must be retuned. Retune only NRT_NLL with `sbatch --array=0-34%35 tuning/tune_nrt.sh --nrt-methods NRT_NLL --force`, or use a new output directory.
 
 ## Simulation
 
@@ -265,11 +267,11 @@ method,case_id,tau,right_censoring_rate,cv_metric,cv_score,average_grid_sse
 
 | method | case_id | tau | right_censoring_rate | cv_metric | cv_score | average_grid_sse |
 | --- | --- | --- | --- | --- | --- | --- |
-| NRT_NLL | ph_right_q0.2 | 4.5741 | 0.1980 | nll | 1.1000 | 2.4000 |
+| NRT_NLL | ph_right_q0.2 | 4.5741 | 0.1980 | brier | 0.1100 | 2.4000 |
 | NRT_Brier | ph_right_q0.2 | 4.5741 | 0.1980 | brier | 0.1050 | 2.2000 |
 | NRT_2Loss | ph_right_q0.2 | 4.5741 | 0.1980 | brier | 0.1080 | 2.3000 |
 
-NRT_NLL records `cv_metric=nll`; NRT_Brier and NRT_2Loss record `cv_metric=brier`. Each benchmark's table uses the same schema, with `cv_metric=nll` for NNCDE and `cv_metric=c_index` for DeepSurv. `cv_score` is the selected candidate's mean CV score. `average_grid_sse` is the final fit's held-out test SSE from the single tuning dataset. `right_censoring_rate` refers to the complete tuning dataset. Train/test censoring rates remain in `result.json`. These tables contain one tuning result per model/case and do not average over simulation replications.
+All three NRT variants record `cv_metric=brier`. Each benchmark's table uses the same schema, with `cv_metric=nll` for NNCDE and `cv_metric=c_index` for DeepSurv. `cv_score` is the selected candidate's mean CV score. `average_grid_sse` is the final fit's held-out test SSE from the single tuning dataset. `right_censoring_rate` refers to the complete tuning dataset. Train/test censoring rates remain in `result.json`. These tables contain one tuning result per model/case and do not average over simulation replications.
 
 Selected hyperparameters are automatically exported to `tuning/output/hyper_para/<method>.csv` for NRT_NLL, NRT_Brier, NRT_2Loss, NNCDE, and DeepSurv. A complete run has 35 rows per NRT loss and 15 rows per benchmark. These tables extend NRT_2Loss's compact layout with the saved censoring horizon:
 

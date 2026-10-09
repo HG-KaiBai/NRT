@@ -33,7 +33,7 @@ NRT_SEARCH_SPACE = {
 }
 NNCDE_GRID = {'hidden_nodes': [64, 128, 256],
               'learning_rate': [0.01, 0.001, 0.0001], 'batch_size': [64, 128, 256]}
-CV_METRICS = {'NRT_NLL': 'nll', 'NRT_Brier': 'brier', 'NRT_2Loss': 'brier',
+CV_METRICS = {'NRT_NLL': 'brier', 'NRT_Brier': 'brier', 'NRT_2Loss': 'brier',
               'NNCDE': 'nll', 'DeepSurv': 'c_index'}
 
 
@@ -172,7 +172,7 @@ def auto_summary(args, cases, methods, worker_jobs):
 
 
 def tune_cv(args, method, data, candidates, output):
-    from tuning.train_mlp import evaluate_brier, evaluate_nll
+    from tuning.train_mlp import evaluate_brier
     training = training_config(args, method)
     metric = CV_METRICS[method]
     folds = cv_splits(data.train, args.tune_seed)
@@ -189,9 +189,7 @@ def tune_cv(args, method, data, candidates, output):
             try:
                 model = fit_model(method, data, train, parameters, training, args.device,
                                   args.tune_seed + (trial - 1) * 4 + fold, 'tuning')
-                if method == 'NRT_NLL':
-                    score = evaluate_nll(model, *data.bounds(valid), args.device)
-                elif method in NRT_LOSSES:
+                if method in NRT_LOSSES:
                     score = evaluate_brier(model, *data.bounds(valid), args.grid_size, args.device)
                 else:
                     score = nncde_nll(model, data, valid)

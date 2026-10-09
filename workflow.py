@@ -23,9 +23,6 @@ SETTINGS = ("ph", "lognormal", "po", "multimodal_separate", "multimodal_closer")
 CENSOR_TYPES = ("exact", "right", "current", "interval")
 NRT_LOSSES = {"NRT_NLL": "joint_nll", "NRT_Brier": "joint_brier", "NRT_2Loss": "alternating"}
 DEFAULT_EPOCHS = {"NRT": 200, **{method: 200 for method in NRT_LOSSES}, "NNCDE": 200, "DeepSurv": 1000}
-FIT_POLICY = {"training_fraction": 0.8, "validation_fraction": 0.2,
-              "early_stopping": "validation", "cv_early_stopping": "cv_validation_fold",
-              "alternating_monitor": "nll"}
 CPU_METHODS = ("deep_distribution_regression", "ctree", "iccforest", "cox", "aft")
 METHODS = (*NRT_LOSSES, "NNCDE", "DeepSurv", *CPU_METHODS)
 SUPPORTED = {
@@ -261,21 +258,15 @@ def cv_splits(indices, seed, folds=4):
             for i, chunk in enumerate(chunks)]
 
 
-def fit_model(method, data, indices, parameters, training, device, seed, package, *, validation_indices=None):
+def fit_model(method, data, indices, parameters, training, device, seed, package):
     seed_fit(seed)
     x, left, right = data.bounds(indices)
-    validation_data = data.bounds(validation_indices) if validation_indices is not None else None
     if method in NRT_LOSSES:
         module = importlib.import_module(f"{package}.train_mlp")
-        support_indices = indices
-        if validation_data is None:
-            optimization, _ = module.training_validation_split(len(indices), seed=seed, device=indices.device)
-            support_indices = indices[optimization]
         model, history = module.fit(
-            x, left, right, 1.1 * data.max_observation(support_indices),
+            x, left, right, 1.1 * data.max_observation(indices),
             module.ModelConfig(**parameters),
             module.TrainingConfig(**training, training_method=NRT_LOSSES[method]), device, verbose=False,
-            validation_data=validation_data,
         )
         return model
     name, class_name = BENCHMARK_BACKENDS[method]
@@ -287,10 +278,7 @@ def fit_model(method, data, indices, parameters, training, device, seed, package
         kwargs["seed"] = seed
     model = model_class(**kwargs)
     try:
-        fit_kwargs = dict(censor_type=data.case.censor_type)
-        if validation_data is not None:
-            fit_kwargs['validation_data'] = validation_data
-        return model.fit(x, left, right, **fit_kwargs)
+        return model.fit(x, left, right, censor_type=data.case.censor_type)
     except BaseException:
         close_model(model)
         raise

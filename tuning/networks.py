@@ -41,7 +41,7 @@ class MLP(nn.Module):
             current_dim = hidden_dim
         layers.append(nn.Linear(current_dim, out_dim))
         self.net = nn.Sequential(*layers)
-        # self.net.apply(init_linear)
+        self.net.apply(init_linear)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)

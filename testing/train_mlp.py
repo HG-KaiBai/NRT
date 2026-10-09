@@ -11,10 +11,8 @@ from torch.utils.data import DataLoader, Dataset
 
 try:  # Support package imports and direct script execution.
     from .mlp import ConditionalTree
-    from .validation import training_validation_split
 except ImportError:  # pragma: no cover
     from mlp import ConditionalTree
-    from validation import training_validation_split
 
 
 @dataclass
@@ -45,8 +43,8 @@ class TrainingConfig:
     @property
     def monitor(self) -> str:
         if self.training_method == "alternating":
-            return "validation_nll"
-        return "validation_" + self.training_method.removeprefix("joint_")
+            return "rho_brier"
+        return self.training_method.removeprefix("joint_")
 
     @property
     def steps(self) -> tuple[tuple[str, str], ...]:
@@ -208,15 +206,11 @@ def fit(
     training_config: TrainingConfig,
     device: str | torch.device | None = None,
     verbose: bool = True,
-    *,
-    validation_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
 ) -> tuple[ConditionalTree, list[dict[str, float]]]:
     """Fit with joint NLL, joint Brier, or alternating m-NLL then rho-Brier.
 
-    Use the supplied CV validation fold, or split the supplied data 80/20 when
-    ``validation_data`` is absent, for optimization and early stopping. Joint
-    modes monitor their validation objective; alternating mode monitors full
-    validation NLL after both coordinate updates. Restore the best checkpoint.
+    Joint modes monitor their epoch-average loss. Alternating mode monitors
+    rho-Brier, recomputing predictions after each m-NLL update.
     CUDA graphs reduce launch overhead without changing minibatch sizes or
     objectives. Set ``cuda_graphs=False`` to use eager CUDA execution.
     """
@@ -232,19 +226,13 @@ def fit(
         raise ValueError("brier_grid_size must be at least 2")
     if not math.isfinite(training_config.max_grad_norm) or training_config.max_grad_norm < 0:
         raise ValueError("max_grad_norm must be finite and non-negative (0 disables clipping)")
+    if len(x) < 1:
+        raise ValueError("the training dataset cannot be empty")
+
     resolved_device = torch.device(
         device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
     )
     dataset = IntervalDataset(x, L, R)
-    if validation_data is None:
-        training_indices, validation_indices = training_validation_split(len(dataset), device=dataset.x.device)
-        validation_data = tuple(values[validation_indices] for values in (dataset.x, dataset.L, dataset.R))
-        dataset = IntervalDataset(*(values[training_indices] for values in (dataset.x, dataset.L, dataset.R)))
-    validation_dataset = IntervalDataset(*validation_data)
-    if len(dataset) < 1 or len(validation_dataset) < 1:
-        raise ValueError("training and validation datasets cannot be empty")
-    validation = (validation_dataset.x, validation_dataset.L, validation_dataset.R)
-    validation = tuple(values.to(resolved_device) for values in validation)
     if resolved_device.type == "cuda":
         # Keep training tensors on the GPU; avoid per-row collation and a
         # host-to-device copy for every minibatch.
@@ -257,7 +245,7 @@ def fit(
             dataset, batch_size=training_config.training_batch_size,
             shuffle=True, drop_last=False,
         )
-    finite_bounds = torch.cat((dataset.L[torch.isfinite(dataset.L)], dataset.R[torch.isfinite(dataset.R)]))
+    finite_bounds = torch.cat((L[torch.isfinite(L)], R[torch.isfinite(R)]))
     max_observation = finite_bounds.max().item()
     model = ConditionalTree(
         **asdict(model_config), max_bound=max_bound, max_observation=max_observation,
@@ -332,26 +320,17 @@ def fit(
                 totals[key].add_(loss.detach(), alpha=batch_size)
             examples_seen += batch_size
 
-        # Transfer accumulated training losses together instead of synchronizing
-        # after each optimizer step. Non-finite GPU losses fail here.
+        # One GPU-to-host transfer per epoch, rather than synchronizing after
+        # each loss and optimizer step. Non-finite GPU losses fail here.
         epoch_losses = (torch.stack(list(totals.values())) / examples_seen).tolist()
         metrics = {"epoch": float(epoch), **dict(zip(totals, epoch_losses))}
         for key, value in zip(totals, epoch_losses):
             if not math.isfinite(value):
                 raise RuntimeError(f"Non-finite {key} loss at epoch {epoch}")
-        if training_config.monitor == "validation_nll":
-            validation_loss = evaluate_nll(model, *validation, resolved_device)
-        else:
-            validation_loss = evaluate_brier(
-                model, *validation, training_config.brier_grid_size, resolved_device,
-            )
-        if not math.isfinite(validation_loss):
-            raise RuntimeError(f"Non-finite {training_config.monitor} at epoch {epoch}")
-        metrics[training_config.monitor] = validation_loss
         history.append(metrics)
         if verbose and (epoch == 1 or epoch % 10 == 0 or epoch == training_config.epochs):
             print(f"Epoch {epoch:03d} | " + " | ".join(
-                f"{key}: {metrics[key]:.4f}" for key in (*totals, training_config.monitor)
+                f"{key}: {metrics[key]:.4f}" for key in totals
             ))
 
         if metrics[training_config.monitor] < best_loss:

@@ -17,7 +17,6 @@ import torch
 from torch import nn
 
 from .losses import cox_partial_log_likelihood
-from ...validation import training_validation_split
 
 
 OFFICIAL_DEEPSURV_COMMIT = "41eed003e5b892c81e7855e400861fa7a2d9da4f"
@@ -197,7 +196,6 @@ class DeepSurvCUDA:
         batch_norm: bool = PAPER_GAUSSIAN_PARAMETERS["batch_norm"],
         standardize: bool = PAPER_GAUSSIAN_PARAMETERS["standardize"],
         epochs: int = PAPER_GAUSSIAN_PARAMETERS["epochs"],
-        patience: int = 20,
         tune: bool = False,
         tuning_evals: int = 50,
         cv_folds: int = 3,
@@ -222,8 +220,6 @@ class DeepSurvCUDA:
             raise ValueError("dropout must be in [0, 1) or None")
         if epochs < 1 or tuning_epochs < 1 or tuning_evals < 1:
             raise ValueError("epoch and tuning counts must be positive")
-        if patience < 1:
-            raise ValueError("patience must be positive")
         if cv_folds < 2:
             raise ValueError("cv_folds must be at least two")
         if optimizer not in {"sgd", "adam"}:
@@ -240,7 +236,6 @@ class DeepSurvCUDA:
         self.batch_norm = bool(batch_norm)
         self.standardize = bool(standardize)
         self.epochs = int(epochs)
-        self.patience = int(patience)
         self.tune = bool(tune)
         self.tuning_evals = int(tuning_evals)
         self.cv_folds = int(cv_folds)
@@ -263,7 +258,6 @@ class DeepSurvCUDA:
         self._tuning_history: list[dict[str, object]] = []
         self.best_hyperparameters_: dict[str, object] | None = None
         self.best_validation_c_index_: float | None = None
-        self.training_history_: list[dict[str, float]] = []
 
     @property
     def modeling_parameters(self) -> dict[str, object]:
@@ -284,9 +278,6 @@ class DeepSurvCUDA:
             "batch_norm": self.batch_norm,
             "standardize": self.standardize,
             "epochs": self.epochs,
-            "patience": self.patience,
-            "validation_fraction": 0.2,
-            "early_stopping_metric": "validation negative Cox partial log-likelihood",
             "optimizer": f"full-batch {self.optimizer.upper()}",
             "optimizer_semantics": (
                 "constant learning rate; the pinned runner compiles its "
@@ -418,31 +409,7 @@ class DeepSurvCUDA:
         *,
         epochs: int,
         seed_offset: int,
-        validation_data=None,
     ) -> tuple[_RiskNetwork, torch.Tensor, torch.Tensor]:
-        if validation_data is None:
-            training, validation = training_validation_split(
-                len(x), seed=self.seed + seed_offset, device=x.device,
-            )
-            if int(event.sum()) < 2:
-                raise ValueError("DeepSurv needs at least two observed events for training and validation")
-            # Keep the split sizes fixed while ensuring both Cox losses have an event.
-            for target, source in ((training, validation), (validation, training)):
-                if not bool(event[target].any()):
-                    source_position = torch.nonzero(event[source], as_tuple=False)[0, 0]
-                    replacement = target[0].clone()
-                    target[0] = source[source_position]
-                    source[source_position] = replacement
-            self._training_indices = training
-            self._validation_indices = validation
-            validation_x = x[validation]
-            validation_times, validation_event = observed[validation], event[validation]
-            x, observed, event = x[training], observed[training], event[training]
-        else:
-            self._training_indices = torch.arange(len(x), device=x.device)
-            validation_x, validation_times, validation_event = validation_data
-            if not bool(event.any()) or not bool(validation_event.any()):
-                raise ValueError("DeepSurv training and validation each require an observed event")
         mean, std = self._normalization(
             x, standardize=configuration.standardize
         )
@@ -450,9 +417,6 @@ class DeepSurvCUDA:
         order = torch.argsort(observed, descending=True, stable=True)
         normalized = normalized[order]
         sorted_event = event[order]
-        validation_order = torch.argsort(validation_times, descending=True, stable=True)
-        normalized_validation = ((validation_x - mean) / std)[validation_order]
-        sorted_validation_event = validation_event[validation_order]
         model = self._make_model(x.shape[1], configuration, seed_offset)
         if self.optimizer == "adam":
             optimizer = torch.optim.Adam(
@@ -463,8 +427,6 @@ class DeepSurvCUDA:
                 model.parameters(), lr=configuration.learning_rate
             )
 
-        best_loss, best_state, stale = float("inf"), None, 0
-        self.training_history_ = []
         for epoch in range(epochs):
             model.train()
             optimizer.zero_grad(set_to_none=True)
@@ -476,27 +438,9 @@ class DeepSurvCUDA:
             )
             loss.backward()
             optimizer.step()
-            model.eval()
-            with torch.no_grad():
-                validation_loss = cox_partial_log_likelihood(
-                    model(normalized_validation), sorted_validation_event, ties="noties",
-                ).item()
-            if not np.isfinite(validation_loss):
-                raise RuntimeError("Non-finite DeepSurv validation loss")
-            self.training_history_.append(dict(epoch=epoch + 1, validation_nll=validation_loss))
-            if validation_loss < best_loss:
-                best_loss = validation_loss
-                best_state = {name: value.detach().clone() for name, value in model.state_dict().items()}
-                stale = 0
-            else:
-                stale += 1
             if self.verbose and (epoch == 0 or (epoch + 1) % 50 == 0):
-                print(f"DeepSurv CUDA epoch {epoch + 1}/{epochs}: validation_nll={validation_loss:.6f}")
-            if stale >= self.patience:
-                break
+                print(f"DeepSurv CUDA epoch {epoch + 1}/{epochs}: {loss.item():.6f}")
 
-        if best_state is not None:
-            model.load_state_dict(best_state)
         model.eval()
         return model, mean, std
 
@@ -563,11 +507,6 @@ class DeepSurvCUDA:
                 configuration,
                 epochs=self.tuning_epochs,
                 seed_offset=len(self._tuning_history),
-                validation_data=(
-                    torch.as_tensor(x_test, device=self.device),
-                    torch.as_tensor(y_test[:, 1], device=self.device),
-                    torch.as_tensor(y_test[:, 0], device=self.device, dtype=torch.float32),
-                ),
             )
             with torch.no_grad():
                 validation_x = torch.as_tensor(x_test, device=self.device)
@@ -656,20 +595,11 @@ class DeepSurvCUDA:
         R: torch.Tensor,
         *,
         censor_type: str,
-        validation_data=None,
     ) -> "DeepSurvCUDA":
         self._validate_training_data(x, L, R, censor_type)
         x_device = x.detach().to(self.device, dtype=torch.float32)
         observed = L.detach().to(self.device, dtype=torch.float32)
         event = torch.isfinite(R.detach()).to(self.device, dtype=torch.float32)
-        if validation_data is not None:
-            valid_x, valid_L, valid_R = validation_data
-            self._validate_training_data(valid_x, valid_L, valid_R, censor_type)
-            validation_data = (
-                valid_x.detach().to(self.device, dtype=torch.float32),
-                valid_L.detach().to(self.device, dtype=torch.float32),
-                torch.isfinite(valid_R.detach()).to(self.device, dtype=torch.float32),
-            )
         if x_device.shape[0] < self.cv_folds and self.tune:
             raise ValueError("training rows must be at least cv_folds")
 
@@ -689,12 +619,8 @@ class DeepSurvCUDA:
             configuration,
             epochs=self.epochs,
             seed_offset=0,
-            validation_data=validation_data,
         )
         with torch.no_grad():
-            x_device, observed, event = (
-                values[self._training_indices] for values in (x_device, observed, event)
-            )
             fitted_risk = model((x_device - mean) / std)
             event_mask = event.bool()
             event_times = torch.unique(observed[event_mask], sorted=True)

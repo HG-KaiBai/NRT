@@ -6,15 +6,6 @@ import torch
 from torch import nn
 
 
-def init_linear(module: nn.Module) -> None:
-    """Initialize linear layers with Glorot uniform weights and zero biases."""
-    if isinstance(module, nn.Linear):
-        nn.init.xavier_uniform_(module.weight)
-        if module.bias is not None:
-            nn.init.zeros_(module.bias)
-
-
-
 class MLP(nn.Module):
     """A deterministic feed-forward network."""
 
@@ -41,7 +32,6 @@ class MLP(nn.Module):
             current_dim = hidden_dim
         layers.append(nn.Linear(current_dim, out_dim))
         self.net = nn.Sequential(*layers)
-        self.net.apply(init_linear)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)

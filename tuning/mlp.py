@@ -9,10 +9,10 @@ import torch
 from torch import nn
 
 try:  # Support package imports and direct script execution.
-    from .networks import MLP, init_linear
+    from .networks import MLP
     from .tree import Tree
 except ImportError:  # pragma: no cover
-    from networks import MLP, init_linear
+    from networks import MLP
     from tree import Tree
 
 EPS = 1e-6
@@ -72,7 +72,6 @@ class ConditionalTree(nn.Module):
         # if shared_layers > 0:
         #     shared.append(nn.LayerNorm(mlp_hidden))
         self.shared_encoder = nn.Sequential(*shared)
-        self.shared_encoder.apply(init_linear)
         self.encoder = MLP(
             encoder_in_dim,
             h_dim,
@@ -85,8 +84,6 @@ class ConditionalTree(nn.Module):
         self.encoder_split = deepcopy(self.encoder)
         self.head_m = nn.Linear(h_dim, self.tree.n_internal)
         self.head_split = nn.Linear(h_dim, self.tree.n_internal)
-        for head in (self.head_m, self.head_split):
-            init_linear(head)
 
     def forward(self, x: torch.Tensor) -> TreeParameters:
         if x.ndim != 2 or x.size(1) != self.x_dim:

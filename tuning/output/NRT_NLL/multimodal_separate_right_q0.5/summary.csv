@@ -1,2 +1,0 @@
-method,case_id,tau,right_censoring_rate,cv_metric,cv_score,average_grid_sse
-NRT_NLL,multimodal_separate_right_q0.5,7.134617469758293,0.5022000074386597,nll,0.7580297887325287,0.3195253908634186

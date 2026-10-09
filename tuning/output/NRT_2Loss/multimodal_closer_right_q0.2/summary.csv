@@ -1,2 +1,0 @@
-method,case_id,tau,right_censoring_rate,cv_metric,cv_score,average_grid_sse
-NRT_2Loss,multimodal_closer_right_q0.2,23.215246276945138,0.19679999351501465,brier,0.9700014144182205,0.18549129366874695

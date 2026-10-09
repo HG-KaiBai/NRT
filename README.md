@@ -1,6 +1,6 @@
-# NRT tuning and simulation
+# NRT tuning and testing
 
-This implements [reademe.md](reademe.md) using the existing `testdata2.py` data generator and model implementations. Defaults are 5,000 observations, an 80/20 train/test split, 500 simulation replications, and 256 evaluation grid points.
+This repository selects hyperparameters for three NRT training variants and neural benchmarks, then compares the fitted methods on fresh simulation datasets. The workflow requirements are recorded in [reademe.md](reademe.md); the algorithms below describe the current implementation in [workflow.py](workflow.py), [tuning/main.py](tuning/main.py), and [testing/simulation.py](testing/simulation.py). Defaults are 5,000 observations per dataset, an 80/20 train/test split, four tuning folds, 500 testing replications, and 256 evaluation grid points.
 
 There are 35 cases across five data settings:
 
@@ -20,21 +20,55 @@ This gives 5 exact cases plus 30 censored cases. Exact cases retain the existing
 
 ## Workflow algorithm
 
-The workflow has two stages: select parameters once for each applicable model/case, then evaluate those fixed parameters on 500 newly generated datasets. A case is one combination of data setting, observation scheme, and q.
+Tuning selects one configuration per method/case. Testing holds that configuration fixed and refits the model from scratch on each of 500 fresh datasets. A case is one combination of data setting, observation scheme, and q; NRT supports all 35 cases.
 
-1. **Prepare tuning data.** Calibrate the population censoring horizon `tau` for the case, generate 5,000 observations, and split them into 4,000 training and 1,000 held-out test observations. The realized right-censoring rate is `mean(R == inf)` and can differ from q in a finite sample. Exact cases use `tau=null` and rate zero. All methods receive the same data and outer split for a given case.
-2. **Select parameters with four-fold CV.** Split only the 4,000 training observations into four folds. For each candidate, fit on three folds (3,000 observations) and validate on the fourth (1,000), rotating through all four folds. Fit preprocessing and model support bounds using that fold's training observations. Select the candidate with the best mean validation criterion. The tuning test set is held aside throughout this search.
-3. **Refit and evaluate.** Fit the selected configuration on all 4,000 training observations and evaluate on the held-out 1,000. Save the selected parameters, training configuration, CV score, test metrics, `tau`, and realized censoring rates. One GPU worker handles this entire search and refit for one model/case; candidates and folds run sequentially inside that worker.
-4. **Run simulation replications.** For each case and replication, generate a fresh dataset with a seed distinct from tuning, retaining the saved `tau`. Share that dataset and its 80/20 split across applicable methods. Load tuned parameters for NRT, NNCDE, and DeepSurv; use the existing defaults/internal tuning for the CPU benchmarks. Fit each method on the training partition and evaluate on the held-out partition. NRT and NNCDE use a 200-epoch limit by default; DeepSurv uses the fixed paper Gaussian settings and 1,000 epochs.
-5. **Summarize automatically after completion.** Tuning summaries collect one selected result per model/case. Testing workers check the shared result JSONs when they finish and publish a table for each complete case, with 500 replication rows and one column per applicable method, followed by means and sample standard deviations. Once all selected cases finish, a separate censoring summary counts each case/replication dataset once across methods to check whether its average realized rate follows q.
+### NRT model and training losses
 
-NRT_NLL trains with joint NLL and selects hyperparameters by the lowest mean validation **NLL**. NRT_Brier trains with joint Brier loss and NRT_2Loss uses alternating training; both select hyperparameters by the lowest mean validation **Brier score**. NNCDE selects the lowest validation **NLL**; DeepSurv selects the highest validation **Harrell C-index**. These CV criteria have different meanings and scales. The common comparison metric is the held-out survival-grid SSE against the known generating survival curve:
+NRT uses a complete binary tree with fixed topology, `2**depth` leaves, and a covariate-dependent distribution. An optional shared Linear/SiLU encoder feeds two private MLP branches: `m(x)` gives left-branch probabilities, and `rho(x)` gives relative split locations. Products of branch probabilities determine leaf masses; recursive splits determine leaf intervals. Each leaf has uniform density, so the model produces a piecewise-linear survival curve. The workflow sets the support endpoint to `1.1 * max_finite_training_bound`; the Brier and evaluation grids end at `max_finite_training_bound`. Each CV fit computes these bounds from its own training fold.
+
+Observations enter fitting as `(X, L, R)`: exact events have `L=R=T`, right-censored events have `R=inf`, and current-status/interval observations supply their observed bounds. The observed-data likelihood is the density at an exact event or the probability mass between the bounds for a censored event. NRT fitting and CV scoring receive only the observed data; the known generating survival curve supplies the reference for evaluation SSE.
+
+| Variant | Updates within each minibatch | Early-stopping monitor | CV selection criterion |
+| --- | --- | --- | --- |
+| `NRT_NLL` (`joint_nll`) | Update both branches and the shared encoder using observed-data NLL | Training NLL | Lowest mean validation NLL |
+| `NRT_Brier` (`joint_brier`) | Update both branches and the shared encoder using expected integrated Brier loss | Training Brier loss | Lowest mean validation Brier score |
+| `NRT_2Loss` (`alternating`) | Update `m` with NLL while detaching `rho`; recompute predictions, then update `rho` with Brier loss while detaching `m` | Training `rho_brier` loss | Lowest mean validation Brier score |
+
+In the alternating NLL step, exact observations contribute their leaf mass, omitting the leaf-width factor because `rho` is detached. The inactive private branch receives no update; the shared encoder receives gradients in both steps.
+
+For Brier loss, let `p_i(t)` be the current model's conditional probability of survival at t given the observed bounds. It is 1 before L, 0 after finite R, and `(S_hat(t|X)-S_hat(R|X)) / (S_hat(L|X)-S_hat(R|X))` inside a censored interval, with `S_hat(inf|X)=0`. Exact events use `p_i(t)=1(T_i>t)`. Training detaches this target and integrates `p_i(t) - 2*p_i(t)*S_hat(t|X_i) + S_hat(t|X_i)**2` by the trapezoidal rule, then averages over subjects. Validation and held-out Brier scores use the same conditional-expectation formula. This observed-data score depends on the fitted model's censored targets.
+
+Workflow defaults for all three variants are AdamW, shuffled minibatches of 256, learning rate 0.001, weight decay 0.0001, gradient-norm clipping at 1.0, and at most 200 epochs. Early stopping uses the epoch-average **training** monitor above with patience 20 and restores the best monitored epoch. The CV validation fold is scored after fitting; it does not control early stopping. Dropout is zero and `split_min=0.1` by default. Model and training details are implemented in [tuning/mlp.py](tuning/mlp.py), [tuning/tree.py](tuning/tree.py), and [tuning/train_mlp.py](tuning/train_mlp.py), with corresponding modules under `testing/`.
+
+### Algorithm 1: tune once per method/case
+
+1. **Generate shared tuning data.** For a censored case, calibrate the population horizon `tau` so independent follow-up `C ~ Uniform(0, tau)` gives `P(T>C)=q`. Generate 5,000 observations using `seed + case.index * 10_000` (default base seed 123), and split them into 4,000 training and 1,000 held-out test observations. Exact cases use `tau=null`. Save the case manifest and realized rates `mean(R == inf)`; finite-sample rates can differ from q. Methods share the same case data and split.
+2. **Enumerate configurations.** For each NRT loss, evaluate the Cartesian product of `depth=[7,8]`, `h_dim=[8,16,32]`, `mlp_hidden=[8,16,32]`, `mlp_layers=[1,2,3]`, and `shared_layers=[1,2,3]`. This gives 162 configurations in deterministic order. `--search-space` can replace these lists; the full grid is always evaluated.
+3. **Fit and score four folds.** Shuffle the 4,000 training indices with the tuning seed (default 321), then rotate through four folds. For each configuration/fold, initialize a fresh model, fit on 3,000 observations using that variant's training algorithm, and score the remaining 1,000. Fit preprocessing and support bounds using only fold-training observations. The held-out tuning test set remains unused.
+4. **Select and refit.** Average the four validation scores and select the lowest NLL for NRT_NLL or lowest Brier score for NRT_Brier/NRT_2Loss. A configuration is eligible only if all four folds succeed with finite scores; the first configuration wins a tie. Fit a fresh model with the selected configuration on all 4,000 training observations, then evaluate on the held-out 1,000. Each loss/case therefore requires 648 CV fits plus one final fit by default.
+5. **Save and export.** Write candidate/fold scores to `cv_results.csv` and the selected parameters, training settings, CV score, held-out metrics, and data metadata to `result.json`. Once all requested cases for a method finish, automatically export its metric summary and `tuning/output/hyper_para/<method>.csv`. Each NRT loss exports independently; the combined NRT summary follows when all selected losses finish. One GPU worker owns each loss/case and runs its candidates/folds sequentially.
+
+NNCDE uses the same outer split and four-fold selection pattern with its 27-configuration grid and validation NLL, retaining internal two-way cross-fitting. DeepSurv uses 50 Optunity Sobol candidate evaluations and maximizes four-fold validation Harrell C-index. Their supported cases and search settings are listed below.
+
+### Algorithm 2: test fixed configurations on fresh datasets
+
+1. **Load the tuning inputs.** Neural methods read model parameters and `tau` from `<method>.csv` in `testing/hyper_para` or `--hyper-dir`; CPU benchmarks read `tau`, `mu`, and `r` from `tuning/output/cases/<case_id>.json`. Testing reuses the saved horizon without recalibration. NRT CSVs transfer the model configuration and `tau`; testing builds its training configuration from the workflow defaults above, with `--epochs` available to override the limit. Custom tuning training settings are not loaded from `result.json`.
+2. **Generate each case/replication.** For replication b from 1 to 500, generate a fresh 5,000-observation dataset using `base_seed + 1_000_000 + case.index * 10_000 + b` (default base seed 123). Split 80/20 and share the same data and split across methods. These seeds differ from tuning seeds. Neural runs must use the same generator settings as tuning; defaults are `mu=0`, `r=None`.
+3. **Refit and evaluate.** Initialize a fresh model with the fixed selected parameters and fit on the 4,000 training observations. NRT uses the same loss-specific updates and early stopping as tuning; testing performs no new NRT hyperparameter search. Evaluate on the 1,000 held-out observations using survival-grid SSE, plus observed-data NLL and Brier score for NRT. NNCDE uses a 200-epoch limit; DeepSurv uses its saved parameters, fixed paper settings, and 1,000 epochs. CPU benchmarks retain their defaults/internal tuning.
+4. **Save each fit.** Atomically write `testing/output/<method>/<case_id>/replication_XXXX.json` with metrics, configuration, seed, `tau`, censoring rates, runtime, and status/error. Matching successful results are reused on rerun; failed fits are retried. Changed configurations require `--force` or a separate output directory.
+5. **Aggregate completed results.** At invocation completion, workers check the shared JSON files and publish each case table once every requested applicable method and replication succeeds. A default table has 500 SSE rows plus mean and sample-standard-deviation rows. Each method selection also publishes its censoring report when all its requested cases/replications finish. Once all selected comparison cases finish, `censoring_summary.csv` counts each case/replication dataset once across methods. Atomic writes preserve existing tables while results are incomplete.
+
+The testing NRT launcher uses three GPU tasks, one per loss, each running 500 replications sequentially across all 35 cases. The CPU launcher uses one task per replication, with a parallel phase for the regular benchmarks followed by a separate ICcforest phase. Launch commands and summary controls are given below.
+
+### Common evaluation metric
+
+The common comparison metric is held-out survival-grid SSE against the known generating survival curve:
 
 ```text
 average_grid_sse = (1 / n_test) * sum_i sum_g (S_hat(t_g | X_i) - S_true(t_g | X_i))^2
 ```
 
-The default evaluation grid has 256 equally spaced points from zero to the largest finite training observation bound. SSE is averaged over test subjects and summed over grid points. NRT also reports held-out observed-data NLL and Brier score.
+The default evaluation grid has 256 equally spaced points from zero to the largest finite training observation bound. SSE is averaged over test subjects and summed over grid points; it is neither divided by grid size nor integrated over time. All methods use the same grid for a given dataset. Lower SSE is better. The observed-data CV criteria above have different meanings and scales. Evaluation SSE is computed after parameter selection using the known generating survival curve as its reference.
 
 ## Tuning
 
@@ -56,7 +90,7 @@ sbatch tuning/tune_deepsurv.sh
 | `tuning/tune_nncde.sh` | `0-14%15` | One of 15 exact/right-censored cases | 15 |
 | `tuning/tune_deepsurv.sh` | `0-14%15` | One of 15 exact/right-censored cases | 15 |
 
-Each task owns one GPU and runs the complete CV search, final fit, and test evaluation for one case in one model. NRT tasks 0–34 tune NRT_NLL, 35–69 tune NRT_Brier, and 70–104 tune NRT_2Loss. The benchmark arrays contain only supported cases. The concurrency limits allow all 135 tasks to run together when cluster resources are available. The tuning and testing scripts request one `nvidia_h100_80gb_hbm3_2g.20gb` GPU; use `sbatch --gpus=<cluster_gpu_type>:1 ...` to select a different GPU type supported by the cluster.
+Each task owns one GPU and runs the complete CV search, final fit, and test evaluation for one case in one model. NRT tasks 0–34 tune NRT_NLL, 35–69 tune NRT_Brier, and 70–104 tune NRT_2Loss. The benchmark arrays contain only supported cases. The concurrency limits allow all 135 tasks to run together when cluster resources are available. Tuning scripts request one `nvidia_h100_80gb_hbm3_2g.20gb` GPU; neural testing scripts request one `nvidia_h100_80gb_hbm3_3g.40gb` GPU. Use `sbatch --gpus=<cluster_gpu_type>:1 ...` to select a different GPU type supported by the cluster.
 
 Task IDs use the supported case order printed by `--list-cases` for that method, starting at zero. For NNCDE and DeepSurv, each data setting occupies three consecutive IDs: exact, right q=0.2, and right q=0.5. For example, task 0 is `ph_exact_q0.2`, task 3 is `lognormal_exact_q0.2`, and task 14 is `multimodal_closer_right_q0.5`. NRT retains seven cases per setting and three blocks of 35 tasks.
 
@@ -78,7 +112,7 @@ Edit the tuning search spaces in these files:
 | --- | --- | --- |
 | All three NRT losses | [tuning/main.py](tuning/main.py) | `NRT_SEARCH_SPACE`: lists of integer choices for `depth`, `h_dim`, `mlp_hidden`, `mlp_layers`, `shared_layers` |
 | NNCDE | [tuning/main.py](tuning/main.py) | `NNCDE_GRID`: lists of choices for `hidden_nodes`, `learning_rate`, `batch_size` |
-| DeepSurv | [tuning/benchmark/deepsurv/cuda_model.py](tuning/benchmark/deepsurv/cuda_model.py) | The ranges passed to `optunity.maximize()` inside `_tune()`; keep the `OFFICIAL_TUNING_PARAMETERS` reference metadata synchronized |
+| DeepSurv | [tuning/benchmark/deepsurv/cuda_model.py](tuning/benchmark/deepsurv/cuda_model.py) | `OFFICIAL_TUNING_PARAMETERS["reference_search"]["ranges"]`, read directly by `_tune()`; keep the testing copy synchronized |
 
 For NRT and NNCDE, you can also create a JSON file with the same keys and pass `--search-space /path/to/file.json` to their tuning launchers. Both use lists of grid choices. For NRT, `[8, 16, 20, 31]` means four choices; `[8, 20]` means two choices. Each NRT list must contain distinct integers; `shared_layers` allows zero and other fields must be positive. For example:
 
@@ -133,7 +167,7 @@ Simulation reads `testing/hyper_para/<method>.csv` for the three NRT losses, NNC
 
 Override input/output roots with `HYPER_DIR` (neural CSVs), `TUNING_DIR` (tuning output containing CPU case manifests), and `OUTDIR`. `REPLICATIONS`, `N_SAMPLES`, `CASES`, `BASE_SEED`, and `GRID_SIZE` configure testing. If changing the CPU replication count, also change its Slurm array, for example `REPLICATIONS=10 sbatch --array=1-10 testing/run_cpu.sh`. All testing launchers use `SUMMARY_METHODS=all` by default so their comparison tables combine the separate CPU and GPU jobs. For a subset run, set `SUMMARY_METHODS` to the same comma-separated method list in every participating launcher, or pass `--summary-methods ...`. Direct Python runs default to summarizing their `--methods` selection.
 
-All methods receive identical data and splits for a given case and replication. Simulation seeds differ from tuning seeds. Each successful result includes truth-based average survival-grid SSE, runtime, `tau`, and censoring rates; NRT also reports observed-data NLL and Brier score. Each invocation also prints its average censoring rate and writes a CSV named `censoring_<methods>_rep<first>_<last>.csv`. GPU launchers therefore report the average over their 500 replications automatically. Results are saved atomically as `testing/output/<method>/<case_id>/replication_0001.json`. Identical successful fits are skipped on rerun. Failed fits record their errors and are retried on rerun. A changed configuration requires another output directory or explicit `--force`.
+All methods receive identical data and splits for a given case and replication. Simulation seeds differ from tuning seeds. Each successful result includes truth-based average survival-grid SSE, runtime, `tau`, and censoring rates; NRT also reports observed-data NLL and Brier score. Each invocation prints its average censoring rate over its successful requested fits. Once all requested cases and replications for a method selection succeed, workers automatically publish `censoring_<methods>_rep1_<replications>.csv`. The CPU array produces one combined 140-row report over all 500 replications, independently of GPU completion. Results are saved atomically as `testing/output/<method>/<case_id>/replication_0001.json`. Identical successful fits are skipped on rerun. Failed fits record their errors and are retried on rerun. A changed configuration requires another output directory or explicit `--force`.
 
 Combined case tables are created automatically once all their applicable methods and replications succeed. Missing or failed results leave existing case tables untouched. The last worker also publishes `censoring_summary.csv` once all selected cases are complete. Writes use atomic replacement, including concurrent finishers and resumed workers. To rebuild tables manually from existing results:
 
@@ -178,7 +212,7 @@ NRT/
         │       ├── replication_0001.json
         │       ├── ...
         │       └── replication_0500.json
-        ├── censoring_<methods>_rep<first>_<last>.csv
+        ├── censoring_<methods>_rep1_<replications>.csv
         ├── tables/
         │   └── <case_id>.csv        # 500 replication rows, average, sample SD
         └── censoring_summary.csv
@@ -192,10 +226,10 @@ NRT/
 | Tuning `result.json` | Selected `parameters`, `training_config`, `cv_metric`, `cv_score`, held-out `average_grid_sse`, NRT `test_nll`/`test_brier`, elapsed time, common data metadata, and request/hash for resumption; exported to hyperparameter CSVs |
 | `testing/hyper_para/<method>.csv` | Saved model configurations and `tau`, indexed by `data_types`; simulation input |
 | `testing/output/tables/<case_id>.csv` | Per-replication `average_grid_sse` in method columns, followed by means and sample standard deviations |
-| NRT/NNCDE `cv_results.csv` | One row per candidate/fold: `trial`, `fold`, candidate hyperparameters, `validation_score`, and `error`; 400 rows for a default NRT search and 108 for NNCDE |
+| NRT/NNCDE `cv_results.csv` | One row per candidate/fold: `trial`, `fold`, candidate hyperparameters, `validation_score`, and `error`; 648 rows for a default NRT search and 108 for NNCDE |
 | DeepSurv `cv_results.json` | Search ranges, sampler, evaluation/fold/epoch settings, selected parameters, best CV C-index, and individual fold fit records |
 | Simulation `replication_XXXX.json` | Model/case/replication identifiers, seed, fixed parameters and `tau`, sample sizes and rates, metrics, elapsed time, `status`, and any fitting `error` |
-| Per-invocation `censoring_<methods>_rep<first>_<last>.csv` | One row per model/case with the successful replication count, average realized right-censoring rate, `tau`, and difference from q for that invocation; a CPU array task covers one replication, whereas a full GPU invocation covers 500 |
+| `censoring_<methods>_rep1_<replications>.csv` | One row per model/case with replication count, mean and sample SD of realized right-censoring rates, `tau`, and mean difference from q; automatically published once the method selection's full requested replication set succeeds |
 
 For custom roots, set `OUTDIR` when submitting each stage, `HYPER_DIR` for neural simulation input, and `TUNING_DIR` for CPU case manifests. The corresponding direct Python options are `--output-dir`, `--hyper-dir`, and `--tuning-dir`. Pass these paths explicitly to summarization as well; direct Python commands do not automatically read the launchers' `OUTDIR` environment variable. For example:
 
@@ -247,7 +281,7 @@ model_name,data_types,parameters,test_average_grid_sse,tau
 
 ### Simulation performance summary
 
-After all four simulation launchers finish, run:
+The workers automatically publish complete case tables. To rebuild them after all four simulation launchers finish, run:
 
 ```bash
 "${PY:-/home/y679zhao/envs/pt/bin/python3.14}" -m testing.simulation summarize

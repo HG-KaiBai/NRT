@@ -2,6 +2,7 @@
 import csv
 from dataclasses import replace
 import json
+import math
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -18,7 +19,7 @@ from .train import fit_raw_time_kl
 from .tuning.main import main as tune, optuna_module
 from .testing.simulation import main as simulate, summarize
 from .unified_nll.nll_cv_train import NLLCVOptimization
-from .unified_nll.train import TrainingConfig
+from .unified_nll.train import TrainingConfig, _evaluate
 from .unified_nll.tuning_model import Architecture
 from .workflow import (METHODS, dataset_hash, evaluate, load_hyperparameters,
                        simulation_data, source_hash, tuning_data)
@@ -106,9 +107,18 @@ class WorkflowTests(unittest.TestCase):
         optimization = NLLCVOptimization(warmup_epochs=1)
         self.assertAlmostEqual(observed_upper_bound(train), 2.2)
         invalid = (torch.zeros(1, 6), torch.tensor([100.]), torch.tensor([100.]))
-        with self.assertRaisesRegex(ValueError, "train-only raw support"):
+        with self.assertRaisesRegex(ValueError, "zero likelihood under raw support"):
             fit_raw_time_kl(train, invalid, architecture=arch, training=training,
                             optimization=optimization, device="cpu")
+        shared, _ = fit_raw_time_kl(train, invalid, architecture=arch, training=training,
+            optimization=optimization, device="cpu", upper_bound=110.)
+        self.assertTrue(math.isfinite(shared.fit_info["validation_nll"]))
+        self.assertEqual(shared.fit_info["upper_bound"], 110.)
+        self.assertAlmostEqual(shared.fit_info["max_observation"], 2.)
+        for upper in (2.1, 0., math.inf, math.nan):
+            with self.subTest(upper_bound=upper), self.assertRaisesRegex(ValueError, "upper_bound"):
+                fit_raw_time_kl(train, invalid, architecture=arch, training=training,
+                    optimization=optimization, device="cpu", upper_bound=upper)
         fixed, history = fit_raw_time_kl(train, architecture=replace(arch, regularization_strength=0.),
             training=training, optimization=replace(optimization, learn_splits=False),
             device="cpu", fixed_epochs=3)
@@ -119,6 +129,63 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(any("validation_nll" in r for r in history))
         with self.assertRaises(ValueError):
             fit_raw_time_kl(train, train, training=training, device="cpu", fixed_epochs=3)
+
+    def test_common_support_covers_all_35_default_cv_datasets(self):
+        arch = Architecture(depth=3, private_width=8, private_layers=1)
+        fold_local_failures = []
+        for case in existing.ALL_CASES:
+            data, _ = tuning_data(case)
+            upper = observed_upper_bound(data.bounds(data.train))
+            model = RawTimeKLTree(arch, upper)
+            for fold, (train, valid) in enumerate(existing.cv_splits(data.train, 321), 1):
+                with self.subTest(case=case.id, fold=fold):
+                    _, left, right = data.bounds(valid)
+                    local_upper = observed_upper_bound(data.bounds(train))
+                    outside = torch.where(left == right, left > local_upper, left >= local_upper)
+                    if outside.any():
+                        fold_local_failures.append((case.id, fold, int(outside.sum())))
+                    score = _evaluate(model, model.prepare(*data.bounds(valid)))
+                    self.assertTrue(math.isfinite(score))
+        self.assertEqual(fold_local_failures, [
+            ("ph_exact_q0.2", 3, 2), ("lognormal_exact_q0.2", 4, 1),
+            ("lognormal_right_q0.2", 2, 1)])
+
+    def test_tuning_freezes_pool_support_without_test_oracle(self):
+        case = existing.select_cases("ph_exact_q0.2")[0]
+        data, seed = tuning_data(case, n_samples=128)
+        # A lone training-pool outlier must be covered when held out by CV.
+        data.L[data.train[0]] = data.R[data.train[0]] = 100.
+        # Neither held-out observations nor latent event times may set support.
+        data.L[data.test] = data.R[data.test] = 1e6
+        data.T.fill_(1e9)
+        upper = observed_upper_bound(data.bounds(data.train))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            space = root/"space.json"
+            space.write_text(json.dumps(dict(search=dict(depth_min=2, depth_max=2, widths=[8],
+                shared_layers_max=1, private_layers_max=1, strength_max=1.),
+                baseline=dict(depth=2, shared_width=8, private_width=8, private_layers=1,
+                              regularization_strength=1.))))
+            with patch("regularization.tuning.main.tuning_data", return_value=(data, seed)):
+                tune(["--cases", case.id, "--output-dir", str(root), "--n-samples", "128",
+                    "--device", "cpu", "--threads", "1", "--trials", "2", "--initial-trials", "2",
+                    "--folds", "4", "--epochs", "3", "--warmup-epochs", "1", "--validation-every", "1",
+                    "--batch-size", "64", "--grid-size", "8", "--no-cuda-graphs", "--search-space", str(space)])
+            request = json.loads((root/"studies"/case.id/"request.json").read_text())["request"]
+            self.assertEqual(request["support"], dict(policy="tuning_train_pool", upper_bound=upper))
+            folds = list((root/"studies"/case.id).glob("**/fold_*.json"))
+            self.assertEqual(len(folds), 20)
+            for path in folds:
+                record = json.loads(path.read_text())
+                self.assertEqual(record["upper_bound"], upper)
+                self.assertTrue(math.isfinite(record["validation_nll"]))
+            for method in METHODS:
+                result = json.loads((root/method/case.id/"result.json").read_text())
+                self.assertEqual(result["status"], "ok")
+                self.assertTrue(math.isfinite(result["cv_score"]))
+                self.assertEqual(result["fit_info"]["upper_bound"], upper)
+                self.assertTrue(result["test_nll_infinite"])
+                self.assertIsNone(result["test_nll"])
 
     def test_infinite_test_nll_is_strict_json_and_sse_remains_available(self):
         case = existing.select_cases("ph_exact_q0.2")[0]

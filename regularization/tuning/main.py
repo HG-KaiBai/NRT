@@ -12,6 +12,7 @@ import numpy as np
 from scipy.stats import qmc
 import torch
 
+from ..model import observed_upper_bound
 from ..train import fit_raw_time_kl
 from ..unified_nll.nll_cv_train import NLLCVOptimization
 from ..unified_nll.train import TrainingConfig
@@ -97,7 +98,8 @@ def suggest(trial, search, baseline, adaptive):
             math.log10(1+search.strength_max))-1 if adaptive else 0.)
 
 
-def score_candidate(folder, request_hash, data, splits, architecture, training, optimization, search, device):
+def score_candidate(folder, request_hash, data, splits, architecture, training, optimization, search, device,
+                    *, upper_bound):
     records = []
     for fold, (train, valid) in enumerate(splits, 1):
         path = folder/f"fold_{fold}.json"
@@ -109,7 +111,7 @@ def score_candidate(folder, request_hash, data, splits, architecture, training, 
         else:
             model, history = fit_raw_time_kl(data.bounds(train), data.bounds(valid),
                 architecture=architecture, training=training, optimization=optimization,
-                seed=search.search_fit_seed, device=device)
+                seed=search.search_fit_seed, device=device, upper_bound=upper_bound)
             record = dict(fold=fold, request_hash=expected, n_valid=len(valid), **model.fit_info)
             atomic_json(path, record)
             atomic_json(folder/f"history_{fold}.json", history)
@@ -121,7 +123,8 @@ def score_candidate(folder, request_hash, data, splits, architecture, training, 
                 cv_best_epochs=epochs, refit_epochs=math.ceil(float(np.median(epochs)))), records
 
 
-def search_method(folder, request_hash, data, splits, method, search, baseline, training, optimization, device):
+def search_method(folder, request_hash, data, splits, method, search, baseline, training, optimization, device,
+                  *, upper_bound):
     optuna = optuna_module()
     adaptive = method == SEARCH_METHODS[1]
     optimization = replace(optimization, learn_splits=adaptive)
@@ -145,7 +148,7 @@ def search_method(folder, request_hash, data, splits, method, search, baseline, 
         trial = optuna.trial.Trial(study, running[0]._trial_id) if running else study.ask()
         architecture = suggest(trial, search, baseline, adaptive)
         scores, _ = score_candidate(folder/"fold_cache"/f"trial_{trial.number}", request_hash,
-            data, splits, architecture, training, optimization, search, device)
+            data, splits, architecture, training, optimization, search, device, upper_bound=upper_bound)
         trial.set_user_attr("parameters", asdict(architecture))
         trial.set_user_attr("scores", scores)
         study.tell(trial, scores["cv_score"])
@@ -167,8 +170,12 @@ def tune_case(args, case, methods, search, baseline, training, optimization):
     if manifest_path.exists() and json.loads(manifest_path.read_text()) != metadata:
         raise ValueError("dataset settings changed; use a fresh output directory")
     atomic_json(manifest_path, metadata)
+    # Freeze one domain before CV/search, using observed bounds from the 80% pool.
+    # Fold-local maxima can exclude validation tails for every architecture.
+    upper_bound = observed_upper_bound(data.bounds(data.train))
     request = dict(case=asdict(case), data=metadata, search=asdict(search), parameters=asdict(baseline),
                    training_config=asdict(training), optimization=asdict(optimization),
+                   support=dict(policy="tuning_train_pool", upper_bound=upper_bound),
                    device=args.device, grid_size=args.grid_size, source_sha256=source_hash(), torch=torch.__version__,
                    optuna=optuna_module().__version__)
     request_hash = fingerprint(request)
@@ -192,13 +199,14 @@ def tune_case(args, case, methods, search, baseline, training, optimization):
                 selected[method] = (Architecture(**saved["parameters"]), saved["scores"])
             else:
                 selected[method] = search_method(folder/method, request_hash, data, splits, method,
-                    search, baseline, training, optimization, args.device)
+                    search, baseline, training, optimization, args.device, upper_bound=upper_bound)
                 architecture, scores = selected[method]
                 atomic_json(path, dict(parameters=asdict(architecture), scores=scores, request_hash=request_hash))
         if MATCHED in methods:
             architecture = replace(selected[METHODS[1]][0], regularization_strength=0.)
             scores, _ = score_candidate(folder/MATCHED, request_hash, data, splits, architecture,
-                training, replace(optimization, learn_splits=False), search, args.device)
+                training, replace(optimization, learn_splits=False), search, args.device,
+                upper_bound=upper_bound)
             selected[MATCHED] = architecture, dict(scores, trial=-1)
             atomic_json(args.output_dir/MATCHED/case.id/"selection.json",
                         dict(parameters=asdict(architecture), scores=selected[MATCHED][1], request_hash=request_hash))

@@ -14,12 +14,14 @@ from .unified_nll.tuning_model import Architecture
 
 def fit_raw_time_kl(train, valid=None, *, architecture=Architecture(),
                training=TrainingConfig(patience=50), optimization=NLLCVOptimization(),
-               seed=101, device="cuda", fixed_epochs=None):
+               seed=101, device="cuda", fixed_epochs=None, upper_bound=None):
     """No Brier call or test input. Both methods use the same checkpoint window.
 
     Fixed rho is exactly 0.5, so the inherited width penalty is identically zero.
     Inactive split parameters are excluded from Adam and gradient clipping.
     Both models initialize the same mass/shared weights at a matched architecture.
+    CV may supply a common support frozen from the outer training pool. Otherwise
+    support is determined only by this fit's observations, including for refits.
     """
     if (not math.isfinite(training.lr) or training.lr <= 0
             or not math.isfinite(training.min_delta) or training.min_delta < 0
@@ -35,12 +37,15 @@ def fit_raw_time_kl(train, valid=None, *, architecture=Architecture(),
     if epochs <= optimization.warmup_epochs:
         raise ValueError("need epochs after the common warmup/checkpoint window")
     torch.manual_seed(seed)
-    upper_bound = observed_upper_bound(train)
+    train_upper_bound = observed_upper_bound(train)
+    upper_bound = train_upper_bound if upper_bound is None else float(upper_bound)
+    if not math.isfinite(upper_bound) or upper_bound < train_upper_bound:
+        raise ValueError("upper_bound must be finite and cover the train-only raw support")
     model = RawTimeKLTree(architecture, upper_bound, optimization).to(device)
     prepared = model.prepare(*train)
     validation = model.prepare(*valid) if valid is not None else None
     if validation is not None and not math.isfinite(_evaluate(model, validation)):
-        raise ValueError("validation observations have zero likelihood under train-only raw support")
+        raise ValueError(f"validation observations have zero likelihood under raw support [0, {upper_bound}]")
     split = list(model.split_encoder.parameters())+list(model.split_head.parameters())
     split_ids = {id(p) for p in split}
     groups = [dict(params=[p for p in model.parameters() if id(p) not in split_ids], lr=training.lr)]
@@ -113,6 +118,6 @@ def fit_raw_time_kl(train, valid=None, *, architecture=Architecture(),
         info.update(rho_mean_absolute_shift=float((rho-.5).abs().mean()),
                     rho_root_mean_absolute_shift=float((rho[:, 0]-.5).abs().mean()))
     info.update(support="raw_time_finite", upper_bound=upper_bound,
-                max_observation=upper_bound/1.1)
+                max_observation=train_upper_bound/1.1)
     model.fit_info = info
     return model, history

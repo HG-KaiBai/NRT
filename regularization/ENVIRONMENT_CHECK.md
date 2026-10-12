@@ -68,6 +68,15 @@ GPU 节点需用同一个解释器验证。实际训练入口已有设备计算 
 本次没有提交 GPU 作业、完整 HPO 或 500 次模拟。
 README 中的有限支持零似然问题属于模型/数据范围问题，与环境依赖无关。
 
+## 支持域修复复查
+
+同日于 `login2` 使用上述解释器复查：CV 已改为共用外层 80% train pool 的观测支持域，
+原先三个 case 的逐折越界问题已修复。`regularization.test_workflow` 现有 9 项测试全部通过，
+覆盖全部 35 case / 140 默认 CV fold，以及外层 test / 真实事件时间不参与支持域确定。
+三个原报错 case 另以默认 n=5000、4 折和小架构、2 trial、3 epoch 完成真实 CPU 流程：
+60 次 CV 拟合、9 次 tuning refit、9 次 simulation 拟合全部成功，CSV 导出及汇总正常。
+此次复查仍无可用 GPU，未验证 CUDA graphs 或提交完整实验。
+
 ## 可复查命令
 
 在 NRT 根目录执行：

@@ -54,7 +54,7 @@ mu、r、样本数量及整体/train/test 的实际右删失率。
 使用原时间 t 上的有限支持 `[0,U]`：
 
 ```text
-U = 1.1 * max(实际拟合子集的有限 L/R 端点)
+U = 1.1 * max(80% train pool 的有限 L/R 端点)，在 CV 搜索前固定
 K = 2**depth
 R(x) = -2/(depth*K) * sum_k log(width_k(x)/(U/K))
 lambda_n = a/sqrt(n_fit)
@@ -64,22 +64,33 @@ objective = mean(observed-data NLL) + lambda_n * mean(R(x))
 精确事件用密度，删失数据用区间概率；右删失的 R=inf 直接进入同一个似然。
 geometry 和叶宽使用 float64，网络和 log mass 使用 float32。
 叶宽下限为 `U * 0.0008/K`；rho=`0.1+0.8*sigmoid(raw)`。
-每个 CV fold 只用该折训练数据确定 U；最终拟合只用 80% train pool 确定 U。
-支持域不使用测试数据或真实事件时间。
+每个 case 的全部 CV fold、候选和方法共用同一个 U，最终拟合也使用这个 U。
+这是在外层训练池上固定支持域的协议：内层 validation 的观测端点参与 U 的确定，
+但不按候选或验证分数调整 U；外层 20% test 和真实事件时间不参与。
+模拟 testing 仍只用每次模拟的 80% train pool 确定 U，不复用 tuning dataset 的数值上界。
+直接调用 `fit_raw_time_kl` 时，默认从本次拟合子集确定 U；CV 通过 `upper_bound` 显式传入
+预先固定的支持上界。请求文件记录 `support.policy=tuning_train_pool` 和 `upper_bound`，
+逐折 `fit_info.max_observation` 仍记录该折实际训练端点的最大值。
 
-如果 validation observation 在训练支持域下概率为零，tuning 报错，
-不扩大 U 或修改数据。测试出现零似然时，结果保存
+似然保留严格计算，不把零概率裁剪为 epsilon。直接拟合时如果 validation observation
+在给定支持域下概率为零，仍会报错；正常 tuning 的共同支持域覆盖全部 CV 观测。
+测试出现零似然时，结果保存
 `test_nll=null, test_nll_infinite=true`，SSE 仍可正常计算；不把无穷 NLL 写成非标准 JSON。
 
-**已确认的默认配置限制：** 在完全复用现有数据、4 折及 fold seed=321 时，
+**修复的逐折支持域问题：** 旧规则在每折训练子集上单独确定 U。
+在完全复用现有数据、4 折及 fold seed=321 时，
 `ph_exact_q0.2` 第 3 折有 2 个零似然验证观测，`lognormal_exact_q0.2` 第 4 折有 1 个，
-`lognormal_right_q0.2` 第 2 折有 1 个。因此保留原 U 规则时，这三个 case 的
-tuning 会明确报错，完整 35-case 的参数导出及后续完整 testing 不能直接完成。
-这个限制来自模型的有限支持；当前实现没有自行扩大支持域或修改数据。
+`lognormal_right_q0.2` 第 2 折有 1 个。共同支持域消除了这三个 case 的 CV 越界，
+数据生成、80/20 split 和 CV 索引均保留原样。
+
+原 NRT `tuning/` 的 `NRT_NLL` 同样使用逐折有限支持，但 CV 选择指标是 Brier，
+并且 `tuning/tree.py` 会把似然裁剪到至少 `1e-8` 后取 log；因此零似然样本的 NLL
+被替换为约 18.42，不会以无穷 NLL 报错。这里继续使用严格 validation NLL 选参。
 
 ## 第一部分：tuning
 
-1. 按原流程生成 dataset 和随机 80/20 split，后 20% 不参与选参。
+1. 按原流程生成 dataset 和随机 80/20 split，从前 80% 的观测端点固定共同支持域，
+   后 20% 不参与选参或支持域确定。
 2. fixed 和 adaptive 每个 case 各自运行 200 个候选：20 个 Sobol/anchor startup，随后 180 个 TPE 候选。
    adaptive 包含 a=0 和强正则 anchor，a 用 `log10(1+a)` 搜索。
 3. 每个候选在 train pool 中完成相同的 4 折 CV；checkpoint 与选参指标均为
@@ -110,6 +121,7 @@ tuning 会明确报错，完整 35-case 的参数导出及后续完整 testing �
 完整默认 tuning 共 `35 * (2*200*4 + 4) = 56140` 次 CV 拟合和 105 次最终拟合。
 可用 `--search-space` 的 JSON 改 `search` 和 `baseline` 字段；baseline 必须在搜索范围内。
 修改模型/搜索/训练/生成设置后使用新输出目录，旧缓存会被指纹检查拒绝。
+本次支持域修复也改变源码及请求指纹；已有 tuning 输出需保留在原目录，修复后另选目录重跑。
 
 ## 第二部分：simulation testing
 
@@ -256,9 +268,14 @@ tuning 恢复 SQLite 与逐折缓存，testing 复用成功 JSON。修改协议�
 `regularization/test_workflow.py` 检查：35 个 case 的原/新 tuning 数据逐项一致、
 35 个 case 在 simulation replication 1 和 7 的数据逐项一致、自定义 mu/r 与 RNG、
 四类观测似然、有限支持和 KL 缩放、固定 rho、固定轮数、无穷测试 NLL 的 JSON 表达，
+全部 35 case / 140 默认 CV fold 的共同支持域、训练池孤立极端值下三个方法的真实选参，
+外层 test / 真实事件时间不参与支持域确定，
 以及真实的小规模 tuning → CSV → simulation → 自动汇总、恢复和缺失结果处理。
 该验证不等同于完整的 35 case × 500 次 GPU 实验。
 
-本次本地验证：上述 7 项测试全部通过，包含真实 CPU 小规模训练与全部 35 case
+本次本地验证：上述 9 项测试全部通过，包含真实 CPU 小规模训练与全部 35 case
 的默认样本量数据一致性检查；两个 Slurm 脚本通过 `bash -n`。
+另外对原先报错的三个 case 使用默认 n=5000、4 折，在小架构、2 trial、3 epoch 下
+完成了 60 次 CV 拟合、9 次 tuning refit 和 9 次 simulation 拟合，全部成功，参数 CSV
+及三张 case 汇总表正常生成。
 尚未提交完整 tuning 或 500 次 GPU simulation 作业。

@@ -1,2 +1,0 @@
-method,case_id,tau,right_censoring_rate,cv_metric,cv_score,average_grid_sse
-NRT_NLL,ph_current_q0.5,1.3513375990573424,0.49140000343322754,brier,0.23819689080119133,3.0276825428009033

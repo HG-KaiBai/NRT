@@ -3,7 +3,7 @@
 #SBATCH --job-name=simulate_regularized_nll
 #SBATCH --output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/regularization/testing/log/%x-%A_%a.out
 #SBATCH --error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/regularization/testing/log/%x-%A_%a.err
-#SBATCH --time=4-00:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_3g.40gb:1

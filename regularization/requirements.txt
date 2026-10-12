@@ -1,0 +1,2 @@
+# The existing NRT environment already supplies torch, numpy and scipy.
+optuna==4.5.0

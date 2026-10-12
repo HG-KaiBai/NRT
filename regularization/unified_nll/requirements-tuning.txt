@@ -1,0 +1,2 @@
+# Optional search dependency; install into .deps to leave the Python environment unchanged.
+optuna==4.5.0

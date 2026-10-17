@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # Common setup for launchers. PY and OUTDIR/HYPER_DIR/TUNING_DIR can be overridden.
-NRT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+NRT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
 export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
 export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}
 export NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-1}
 export PYTHONUNBUFFERED=1
 cd "$NRT_ROOT"
+
+# Use the rebuilt environment on Rorqual unless an interpreter is supplied.
+if [[ -z ${PY:-} ]]; then
+  source /home/y679zhao/envs/nrt-runtime/activate.sh
+fi
 
 # Run probes and fits on the allocated node, using the job's visible devices.
 nrt_step() {
@@ -53,7 +58,7 @@ nrt_requeue_current_task() {
 }
 
 nrt_resolve_python() {
-  local interpreter=${PY:-/home/y679zhao/envs/pt/bin/python3.14}
+  local interpreter=${PY:-/home/y679zhao/envs/nrt-runtime/bin/python}
   local attempts=${NRT_PYTHON_CHECK_ATTEMPTS:-4}
   local retry_delay=${NRT_PYTHON_CHECK_DELAY_SECONDS:-15}
   local attempt

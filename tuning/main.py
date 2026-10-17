@@ -21,44 +21,22 @@ from tuning.benchmark.deepsurv.cuda_model import (
     OFFICIAL_TUNING_PARAMETERS, PAPER_GAUSSIAN_FIXED_PARAMETERS,
 )
 from workflow import (
-    ROOT, SCHEMA_VERSION, ALL_CASES, DEFAULT_EPOCHS, NRT_LOSSES, SUPPORTED, atomic_json, node_preflight, close_model,
+    ROOT, SCHEMA_VERSION, ALL_CASES, DEFAULT_EPOCHS, SUPPORTED, atomic_json, node_preflight, close_model,
     cv_splits, evaluate, fingerprint, fit_model, generate, horizon, nncde_nll, select_cases,
     write_csv,
 )
 
 # Explicit grid choices. Edit here or supply --search-space with a JSON file.
-NRT_SEARCH_SPACE = {
-    'depth': [7, 8], 'h_dim': [8, 16, 32], 'mlp_hidden': [8, 16, 32],
-    'mlp_layers': [1, 2, 3], 'shared_layers': [1, 2, 3],
-}
 NNCDE_GRID = {'hidden_nodes': [64, 128, 256],
               'learning_rate': [0.01, 0.001, 0.0001], 'batch_size': [64, 128, 256]}
-CV_METRICS = {'NRT_NLL': 'brier', 'NRT_Brier': 'brier', 'NRT_2Loss': 'brier',
-              'NNCDE': 'nll', 'DeepSurv': 'c_index'}
+CV_METRICS = {'NNCDE': 'nll', 'DeepSurv': 'c_index'}
 
 
-def validate_nrt_search_space(space):
-    if not isinstance(space, dict) or set(space) != set(NRT_SEARCH_SPACE):
-        raise ValueError('NRT search space must define depth, h_dim, mlp_hidden, mlp_layers, shared_layers')
-    for key, choices in space.items():
-        minimum = 0 if key == 'shared_layers' else 1
-        if (not isinstance(choices, (list, tuple)) or not choices
-                or any(type(v) is not int or v < minimum for v in choices)):
-            raise ValueError(f'{key} requires a nonempty list of integer choices >= {minimum}')
-        if len(set(choices)) != len(choices):
-            raise ValueError(f'{key} choices must be unique')
 
 
-def grid_candidates(space):
-    validate_nrt_search_space(space)
-    keys = list(space)
-    return [dict(zip(keys, values)) for values in itertools.product(*(space[key] for key in keys))]
 
 
 def configurations(args):
-    if args.method == 'NRT':
-        space = json.loads(Path(args.search_space).read_text()) if args.search_space else NRT_SEARCH_SPACE
-        return grid_candidates(space)
     grid = json.loads(Path(args.search_space).read_text()) if args.search_space else NNCDE_GRID
     if set(grid) != set(NNCDE_GRID) or any(not values for values in grid.values()):
         raise ValueError('NNCDE grid needs nonempty hidden_nodes, learning_rate, batch_size lists')
@@ -70,10 +48,6 @@ def configurations(args):
 
 
 def training_config(args, method):
-    if method in NRT_LOSSES:
-        return dict(epochs=args.epochs, training_batch_size=args.batch_size, lr=args.lr,
-                    weight_decay=args.weight_decay, patience=args.patience,
-                    brier_grid_size=args.grid_size, cuda_graphs=args.cuda_graphs, max_grad_norm=1.0)
     if method == 'NNCDE':
         return dict(epochs=args.epochs, patience=args.patience)
     return {**PAPER_GAUSSIAN_FIXED_PARAMETERS,
@@ -85,9 +59,9 @@ def tuning_jobs(args, cases, methods):
         return [(method, case) for method in methods for case in cases
                 if case.censor_type in SUPPORTED[method]]
     # Array indices always use the complete applicable matrix, even when --cases or
-    # --nrt-methods filters the requested work. Case.index is a seed index,
-    # so it must not be used for this contiguous 35-case task mapping.
-    array_methods = list(NRT_LOSSES) if args.method == 'NRT' else [args.method]
+    # case filters are applied. Case.index is a seed index,
+    # so it must not be used for this contiguous benchmark task mapping.
+    array_methods = [args.method]
     array_cases = [case for case in ALL_CASES
                    if any(case.censor_type in SUPPORTED[method] for method in array_methods)]
     task_count = len(array_methods) * len(array_cases)
@@ -172,7 +146,6 @@ def auto_summary(args, cases, methods, worker_jobs):
 
 
 def tune_cv(args, method, data, candidates, output):
-    from tuning.train_mlp import evaluate_brier
     training = training_config(args, method)
     metric = CV_METRICS[method]
     folds = cv_splits(data.train, args.tune_seed)
@@ -180,8 +153,6 @@ def tune_cv(args, method, data, candidates, output):
     best_score, best_parameters = math.inf, None
     for trial, candidate in enumerate(candidates, 1):
         parameters = {**candidate}
-        if method in NRT_LOSSES:
-            parameters.update(x_dim=6, dropout=0.0, split_min=args.split_min)
         scores = []
         for fold, (train, valid) in enumerate(folds, 1):
             model = None
@@ -189,10 +160,7 @@ def tune_cv(args, method, data, candidates, output):
             try:
                 model = fit_model(method, data, train, parameters, training, args.device,
                                   args.tune_seed + (trial - 1) * 4 + fold, 'tuning')
-                if method in NRT_LOSSES:
-                    score = evaluate_brier(model, *data.bounds(valid), args.grid_size, args.device)
-                else:
-                    score = nncde_nll(model, data, valid)
+                score = nncde_nll(model, data, valid)
                 if not math.isfinite(score):
                     raise ValueError('Non-finite validation score')
             except (RuntimeError, ValueError) as exc:
@@ -224,7 +192,7 @@ def tune_case(args, method, case, candidates):
                    seed=data_seed, tune_seed=args.tune_seed, n_samples=args.n_samples,
                    mu=args.mu, r=args.r, tau=tau, cv_folds=4, grid_size=args.grid_size,
                    candidates=candidates,
-                   tuning_evals=len(candidates) if method in NRT_LOSSES else args.tuning_evals,
+                   tuning_evals=args.tuning_evals,
                    training_config=training_config(args, method), split_min=args.split_min)
     if method == 'DeepSurv':
         request['search_ranges'] = OFFICIAL_TUNING_PARAMETERS['reference_search']['ranges']
@@ -275,12 +243,11 @@ def tune_case(args, method, case, candidates):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--method', choices=('NRT', 'NNCDE', 'DeepSurv'), required=True)
-    p.add_argument('--nrt-methods', default=','.join(NRT_LOSSES))
+    p.add_argument('--method', choices=('NNCDE', 'DeepSurv'), required=True)
     p.add_argument('--cases', default='all', help='all or comma-separated case IDs; see --list-cases')
     p.add_argument('--list-cases', action='store_true', help='List supported case IDs in array order')
     p.add_argument('--task-id', type=int,
-                   help='Zero-based array task: NRT uses three blocks of 35; NNCDE/DeepSurv use 15 cases')
+                   help='Zero-based array task: NNCDE/DeepSurv use 15 cases')
     p.add_argument('--summarize', action='store_true', help='Combine existing tuning results without fitting; run after the array completes')
     output_dir = ROOT / 'tuning' / 'output'
     p.add_argument('--output-dir', type=Path, default=output_dir, help=f'Default: {output_dir}')
@@ -294,7 +261,7 @@ def parser():
     p.add_argument('--tuning-evals', type=int, default=50,
                    help='DeepSurv candidate count (default 50); grid searches use their full grids')
     p.add_argument('--search-space', help='JSON file containing explicit grid choice lists')
-    p.add_argument('--epochs', type=int, help='Epoch limit: defaults to 200 for NRT/NNCDE, 1000 for DeepSurv')
+    p.add_argument('--epochs', type=int, help='Epoch limit: defaults to 200 for NNCDE, 1000 for DeepSurv')
     p.add_argument('--patience', type=int, default=20)
     p.add_argument('--grid-size', type=int, default=256)
     p.add_argument('--batch-size', type=int, default=256)
@@ -312,9 +279,7 @@ def main(argv=None):
     if args.epochs is None:
         args.epochs = DEFAULT_EPOCHS[args.method]
     cases = select_cases(args.cases)
-    methods = args.nrt_methods.split(',') if args.method == 'NRT' else [args.method]
-    if args.method == 'NRT' and (not methods or set(methods) - NRT_LOSSES.keys()):
-        raise ValueError('--nrt-methods must contain NRT_NLL, NRT_Brier or NRT_2Loss')
+    methods = [args.method]
     if args.list_cases:
         print('\n'.join(case.id for case in cases
                         if any(case.censor_type in SUPPORTED[method] for method in methods)))

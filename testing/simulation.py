@@ -20,7 +20,7 @@ if __package__ in (None, ''):
 import torch
 from testing.benchmark.deepsurv.cuda_model import PAPER_GAUSSIAN_FIXED_PARAMETERS
 from workflow import (
-    ROOT, SCHEMA_VERSION, DEFAULT_EPOCHS, ALL_CASES, CPU_METHODS, METHODS, NRT_LOSSES, SUPPORTED, atomic_json,
+    ROOT, SCHEMA_VERSION, DEFAULT_EPOCHS, ALL_CASES, CPU_METHODS, METHODS, SUPPORTED, atomic_json,
     node_preflight, close_model, evaluate, fingerprint, fit_model, generate,
     select_cases, select_methods, write_csv,
 )
@@ -32,7 +32,7 @@ def result_path(output, method, case, replication):
 
 def hyperparameter_paths(args):
     """Allow a single neural run to use an explicitly named CSV in isolation."""
-    neural_methods = (*NRT_LOSSES, 'NNCDE', 'DeepSurv')
+    neural_methods = ('NNCDE', 'DeepSurv')
     if args.hyper_file is not None:
         methods = select_methods(args.methods)
         if len(methods) != 1 or methods[0] not in neural_methods:
@@ -102,7 +102,7 @@ def cpu_case_manifest(args, case):
 
 
 def load_spec(args, method, case):
-    if method in (*NRT_LOSSES, 'NNCDE', 'DeepSurv'):
+    if method in ('NNCDE', 'DeepSurv'):
         tables, taus = hyperparameter_tables(args)
         path = hyperparameter_paths(args)[method]
         if case.censor_type != 'exact' and case.id not in taus:
@@ -115,11 +115,7 @@ def load_spec(args, method, case):
             raise ValueError(f'No hyperparameters for {case.id} in {path}')
         tuned = tables[method][case.id]
         parameters = dict(tuned['parameters'])
-        if method in NRT_LOSSES:
-            training = dict(epochs=DEFAULT_EPOCHS[method], training_batch_size=256,
-                            lr=1e-3, weight_decay=1e-4, patience=20,
-                            brier_grid_size=args.grid_size, cuda_graphs=True, max_grad_norm=1.0)
-        elif method == 'NNCDE':
+        if method == 'NNCDE':
             training = dict(epochs=DEFAULT_EPOCHS[method], patience=20)
         else:
             training = {name: value for name, value in PAPER_GAUSSIAN_FIXED_PARAMETERS.items()
@@ -136,7 +132,7 @@ def load_spec(args, method, case):
         elif method == 'iccforest':
             parameters = dict(ntree=args.forest_trees, tune_ntree=args.forest_trees)
         source_hash = fingerprint(manifest)
-    if args.epochs is not None and method in (*NRT_LOSSES, 'NNCDE', 'DeepSurv'):
+    if args.epochs is not None and method in ('NNCDE', 'DeepSurv'):
         training['epochs'] = args.epochs
     return manifest, parameters, training, source_hash
 
@@ -418,7 +414,7 @@ def parser():
     p.add_argument('--iccforest-parallel-fits', type=int, default=1,
                    help='ICcforest fits in a separate phase; default 1 limits R memory use')
     p.add_argument('--threads-per-fit', type=int, default=1)
-    p.add_argument('--epochs', type=int, help='Override epoch limit: NRT/NNCDE default to 200; DeepSurv defaults to 1000')
+    p.add_argument('--epochs', type=int, help='Override epoch limit: NNCDE defaults to 200; DeepSurv defaults to 1000')
     p.add_argument('--ddr-epochs', type=int, default=100)
     p.add_argument('--ddr-patience', type=int, default=20)
     p.add_argument('--forest-trees', type=int, default=100)

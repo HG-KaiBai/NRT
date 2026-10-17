@@ -1,4 +1,9 @@
-# Current KL: finite support in original time
+> The current NRT workflow is [regularization](../README.md). The notebooks below
+> are historical entry points requiring packages from their original source project.
+> Current NRT reuses model and training components from this directory through
+> `regularization/model.py` and `regularization/train.py`.
+
+# Historical KL experiments and current shared model components
 
 The current main notebook `tune_nll_cv_rho.ipynb`, server notebook
 `tuning/tune_kl_server.ipynb` and single-case notebook
@@ -26,7 +31,7 @@ The separate single-case notebook is
 [`../kl_single_case/model_kl.ipynb`](../kl_single_case/model_kl.ipynb), using
 `neural_only.testdata2` directly. For a fresh server study, edit
 [`tuning/tune_kl_server.ipynb`](tuning/tune_kl_server.ipynb) and follow the
-Chinese [server tuning guide](tuning/README.md). Fresh tuning checks that
+[server tuning guide](tuning/README.md). Fresh tuning checks that
 the frozen simulator and neural_only generator still have identical logic.
 Completed numerical source files remain unchanged; only CSV result summaries remain.
 

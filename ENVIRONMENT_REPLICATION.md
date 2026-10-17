@@ -1,3 +1,7 @@
+> Historical environment: this guide describes the original Python 3.14 benchmark
+> snapshot. For the current regularization implementation and installed Python 3.11
+> runtime, use [environment/current/README.md](environment/current/README.md).
+
 # Recreate the NRT Python and R environments on another server
 
 This guide includes a prompt to give an assistant on the destination server. Copy this file and the entire `environment/` directory with the project. The manifests describe the **installed environment inspected on 2026-10-09**, including transitive dependencies and package build suffixes.

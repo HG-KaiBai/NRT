@@ -1,68 +1,57 @@
-# 服务器上的原时间有限支持 KL 调参
+# Historical raw-time finite-support KL notebook
 
-打开 `tune_kl_server.ipynb`，先编辑配置 cell，再顺序执行。
-当前入口使用 `pycode.unified_nll.raw_time.search` 和 `raw_time.report`。
-固定 rho、adaptive KL、匹配 adaptive 架构的固定 rho 三组，均使用原时间有限支持。
-历史 `nll_cv_search` / `nll_cv_train` 及完成结果保留，供旧无限支持实验复现。
+`tune_kl_server.ipynb` is retained from the original source project. It imports
+`pycode.unified_nll.raw_time.search` and `raw_time.report`; those external package
+paths are not the current NRT entry point. Use [current NRT tuning](../../tuning/README.md)
+for a self-contained workflow in this repository. Historical infinite-support
+experiments and their completed results remain available for reference.
 
-## 树支持域
-
-每次拟合仅从当前拟合子集的原始 L/R 有限端点计算：
+In the original source project, edit the configuration cell and execute cells in
+order. Fixed rho, adaptive KL, and fixed rho at the adaptive architecture all use
+raw-time finite support. For each fitting subset:
 
 ```text
 max_observation = max(finite training L/R endpoints)
 upper_bound = 1.1 * max_observation
-tree support = [0, upper_bound]
+support = [0, upper_bound]
 R = -2/(depth*L) * sum(log(width/(upper_bound/L)))
 lambda_n = a/sqrt(n_fit), L=2**depth
 ```
 
-没有非线性时间变换，叶内原时间密度均匀。
-KL 保留叶平均1/L、深度2/depth；不额外乘 upper_bound。
-叶宽下限为 `upper_bound * 0.0008/L`。
-CV 每折上界只用该折训练部分；最终拟合上界只用前80%完整拟合池。
-验证/测试和潜在真实事件时间不会决定支持域。
-验证观测若在训练支持域下不可能，直接报错，不扩大上界或裁剪事件。
-最终测试的零似然诚实记录为无穷 NLL，SSE 仍照原网格计算。
+Leaf density is uniform on raw time. The width floor is `upper_bound*0.0008/L`.
+KL retains the leaf average and depth factor, without another upper-bound factor.
+This historical notebook uses each CV fold's fitting subset to set support;
+validation impossibility raises an error. Final test zero likelihood is recorded
+as infinite NLL. The current workflow instead fixes common support from the outer
+training pool, as documented in the current guide.
 
-## 环境和执行
+The historical notebook defaults are:
 
-```bash
-cd /your/path/PolyaPFN
-python -m pip install numpy pandas scipy matplotlib nbformat nbclient ipykernel
-python -m pip install -r pycode/unified_nll/requirements-tuning.txt
-python -m unittest pycode.kl_single_case.test_case_study pycode.unified_nll.raw_time.test_raw_time -v
-python -m pycode.unified_nll.run_notebook pycode/unified_nll/tuning/tune_kl_server.ipynb
-```
-
-默认新目录 `results/kl_cv_server_raw_time_v1`，不复用旧归一化缓存。
-配置、源码、设备指纹一致时，重新执行 notebook 恢复缓存；写锁拒绝并发写入。
-先由 `verify_generator()` 核对 frozen simulator 与 neural_only.testdata2 的实际逻辑一致。
-数据生成仍使用 CPU seed 和原始观测，不改变删失机制、划分或时间数据。
-
-## 配置 cell
-
-| 配置 | 默认值 |
+| Setting | Value |
 | --- | --- |
-| CONFIG.scenarios / censor_types / censor_qs | 全部35 setting |
-| CONFIG.n_samples / grid_size | 5000 / 256 |
-| CONFIG.data_seed / seeds | 123 / 0..9 |
-| BASELINE.x_dim | 6 |
-| SEARCH.trials / initial_trials / folds | 64 / 16 / 4 |
-| SEARCH.fold_seed / search_seed / search_fit_seed | 20261010 / 871 / 101 |
+| Cases | All 35 |
+| n_samples / grid_size | 5000 / 256 |
+| data_seed / final seeds | 123 / 0..9 |
+| x_dim | 6 |
+| trials / initial_trials / folds | 64 / 16 / 4 |
+| fold_seed / search_seed / search_fit_seed | 20261010 / 871 / 101 |
 | depth / shared_layers / private_layers | 3..8 / 0..3 / 1..4 |
-| shared_width / private_width | 16,32,64,128 |
-| SEARCH.strength_max | 100000，用 log10(1+a) 搜索 |
-| TRAINING.lr / OPTIMIZATION.split_lr_ratio | 1e-3 / 0.1 |
-| epochs / patience / validation_every / min_delta | 200 / 50 / 5 / 1e-4 |
-| warmup_epochs / batch_size / cuda_graphs | 10 / 256 / True |
+| shared_width / private_width | 16, 32, 64, 128 |
+| strength_max | 100000, searched on log10(1+a) |
+| learning rate / split ratio | 0.001 / 0.1 |
+| epochs / patience / validation_every / min_delta | 200 / 50 / 5 / 0.0001 |
+| warmup / batch size / CUDA graphs | 10 / 256 / enabled |
 
-`train_fraction=0.6` 与 `validation_fraction=0.2` 合成前80%拟合池，
-四折只在池内划分，后20%只用于冻结后的最终测试。
-每个搜索/架构范围必须仍包含 BASELINE，协议变化必须换输出目录。
-实际方法列表由 `raw_time.search.METHODS` 决定。
-预算仍为18060 CV fits、1050 final fits；修改 notebook 不会自动启动完整搜索。
-checkpoint / TPE / 选参均用未加正则验证 NLL。
-所有选择全局冻结后，最终轮数取各折最佳轮数中位数的上取整；不依据测试 SSE 停止。
-SSE 保留 neural_only 定义：256点 `[0,训练最大有限端点]`，逐对象误差平方和再平均。
-0..9 seed 已用于方法开发，新的确认性评估应预先指定新的数据 seed。
+The first 80% forms the fitting pool; the final 20% is reserved for evaluation.
+All search ranges must contain the baseline. Use a new directory for protocol
+changes; the historical default is `results/kl_cv_server_raw_time_v1`. Matching
+configuration, source, and device fingerprints permit cache resumption, with a
+writer lock preventing concurrent modification. `verify_generator()` compares
+the frozen simulator with the original generator before fitting.
+
+Checkpoint selection, TPE, and final selection use unregularized validation NLL.
+After all selections are frozen, the final epoch count is the ceiling of the median
+best fold epoch. SSE uses 256 points up to the maximum observed training endpoint,
+sums grid errors, and averages subjects. The default budget is 18060 CV fits and
+1050 final fits. Editing the notebook does not start a search. Seeds 0..9 were used
+in development; independent confirmation requires newly specified data seeds.

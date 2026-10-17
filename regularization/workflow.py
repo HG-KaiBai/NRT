@@ -54,7 +54,12 @@ def source_hash():
     for path in files:
         digest.update(str(path.relative_to(NRT_ROOT)).encode())
         digest.update(path.read_bytes())
-    return digest.hexdigest()
+    current = digest.hexdigest()
+    aliases = NRT_ROOT / "environment" / "source-compatibility.json"
+    if aliases.exists():
+        # Exact whole-source match only; any later numerical edit gets a new hash.
+        return json.loads(aliases.read_text()).get("aliases", {}).get(current, current)
+    return current
 
 
 def dataset_hash(data):

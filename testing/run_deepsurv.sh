@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #SBATCH --account=def-anthree
 #SBATCH --job-name=simulate_deepsurv
-#SBATCH --output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/testing/log/%x-%A_%a.out
-#SBATCH --error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/testing/log/%x-%A_%a.err
+#SBATCH --output=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT/testing/log/%x-%A_%a.out
+#SBATCH --error=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT/testing/log/%x-%A_%a.err
 #SBATCH --time=4-12:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -17,7 +17,7 @@ set -euo pipefail
 # Slurm executes a spool copy; source runtime.sh from the shared project.
 if [[ -z ${NRT_ROOT:-} ]]; then
   if [[ -n ${SLURM_JOB_ID:-} || -n ${SLURM_SUBMIT_DIR:-} ]]; then
-    NRT_ROOT=/home/y679zhao/projects/def-anthree/y679zhao/NRT
+    NRT_ROOT=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT
   else
     NRT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
   fi

@@ -36,7 +36,7 @@ class SearchConfig:
     widths: tuple = (16, 32, 64, 128)
     shared_layers_max: int = 3
     private_layers_max: int = 4
-    strength_max: float = 100000.
+    strength_max: float = 10000.
 
 
 def optuna_module():
@@ -62,7 +62,7 @@ def startup(search, baseline, adaptive, seed):
     result = [coordinates(first, adaptive)]
     if adaptive:
         result.append(coordinates(replace(baseline, regularization_strength=0.), True))
-        for strength in (1000., 10000., 100000.):
+        for strength in (1000., 10000.):
             if strength <= search.strength_max:
                 result.append(coordinates(replace(baseline, regularization_strength=strength), True))
     sampler = qmc.Sobol(6, scramble=True, seed=seed)

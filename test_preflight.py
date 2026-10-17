@@ -81,11 +81,11 @@ class NodePreflightTests(unittest.TestCase):
         self.assertIn('missing optunity', output.getvalue())
 
     def test_driver_preflight_failure_prevents_work(self):
-        with patch('sys.argv', ['tuning.main', '--method', 'NRT', '--task-id', '0', '--device', 'cpu']), \
+        with patch('sys.argv', ['tuning.main', '--method', 'NNCDE', '--task-id', '0', '--device', 'cpu']), \
              patch.object(tune, 'node_preflight', side_effect=SystemExit(75)) as preflight, \
              patch.object(tune, 'tune_case') as fit, self.assertRaises(SystemExit):
             tune.main()
-        preflight.assert_called_once_with('cpu', {'NRT_NLL'}, 'tuning')
+        preflight.assert_called_once_with('cpu', {'NNCDE'}, 'tuning')
         fit.assert_not_called()
         args = sim.parser().parse_args(['run', '--device', 'cpu', '--replications', '1'])
         with patch.object(sim, 'node_preflight', side_effect=SystemExit(75)) as preflight, \
@@ -99,7 +99,7 @@ class NodePreflightTests(unittest.TestCase):
     def test_preview_and_summary_skip_node_checks(self):
         for options in (['--list-cases'], ['--dry-run'], ['--summarize']):
             with self.subTest(options=options), \
-                 patch('sys.argv', ['tuning.main', '--method', 'NRT', *options]), \
+                 patch('sys.argv', ['tuning.main', '--method', 'NNCDE', *options]), \
                  patch.object(tune, 'write_summary'), patch.object(tune, 'node_preflight') as preflight, \
                  redirect_stdout(io.StringIO()):
                 tune.main()

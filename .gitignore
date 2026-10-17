@@ -1,3 +1,9 @@
 *.json
 *.err
 *.out
+__pycache__/
+*.py[cod]
+*.lock
+reproduction/
+!environment/*.json
+!environment/current/*.json

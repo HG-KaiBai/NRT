@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #SBATCH --account=def-anthree
 #SBATCH --job-name=simulate_regularized_nll
-#SBATCH --output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/regularization/testing/log/%x-%A_%a.out
-#SBATCH --error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/regularization/testing/log/%x-%A_%a.err
+#SBATCH --output=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT/regularization/testing/log/%x-%A_%a.out
+#SBATCH --error=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT/regularization/testing/log/%x-%A_%a.err
 #SBATCH --time=1-00:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -15,7 +15,7 @@
 set -euo pipefail
 if [[ -z ${NRT_ROOT:-} ]]; then
   if [[ -n ${SLURM_JOB_ID:-} ]]; then
-    NRT_ROOT=/home/y679zhao/projects/def-anthree/y679zhao/NRT
+    NRT_ROOT=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT
   else
     NRT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
   fi

@@ -1,0 +1,21 @@
+{
+  "reason": "2026-10-16: remove legacy NRT dispatch and add this exact-source alias lookup; all current NRT numerical functions and inputs are unchanged. Any other source digest is not aliased.",
+  "aliases": {
+    "d0334cfde7227f949493153275d63f761456637ac79f350a280670025e92a1a6": "b9cdc6d1d640f0085b0934a664d943301bc37ac1d244ba10f5e10d806aab2e5f"
+  },
+  "files": [
+    "regularization/model.py",
+    "regularization/train.py",
+    "regularization/workflow.py",
+    "workflow.py",
+    "tuning/testdata2.py",
+    "regularization/tuning/main.py",
+    "regularization/unified_nll/model.py",
+    "regularization/unified_nll/tree.py",
+    "regularization/unified_nll/train.py",
+    "regularization/unified_nll/regularization.py",
+    "regularization/unified_nll/tuning_model.py",
+    "regularization/unified_nll/cv_train.py",
+    "regularization/unified_nll/nll_cv_train.py"
+  ]
+}

@@ -1,2 +1,0 @@
-method,case_id,tau,right_censoring_rate,cv_metric,cv_score,average_grid_sse
-NRT_NLL,lognormal_current_q0.2,3.1234899682837227,0.19259999692440033,nll,0.1812554895877838,0.7521241903305054

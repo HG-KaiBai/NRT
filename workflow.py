@@ -21,12 +21,11 @@ ROOT = Path(__file__).resolve().parent
 SCHEMA_VERSION = 1
 SETTINGS = ("ph", "lognormal", "po", "multimodal_separate", "multimodal_closer")
 CENSOR_TYPES = ("exact", "right", "current", "interval")
-NRT_LOSSES = {"NRT_NLL": "joint_nll", "NRT_Brier": "joint_brier", "NRT_2Loss": "alternating"}
-DEFAULT_EPOCHS = {"NRT": 200, **{method: 200 for method in NRT_LOSSES}, "NNCDE": 200, "DeepSurv": 1000}
+DEFAULT_EPOCHS = {"NNCDE": 200, "DeepSurv": 1000}
 CPU_METHODS = ("deep_distribution_regression", "ctree", "iccforest", "cox", "aft")
-METHODS = (*NRT_LOSSES, "NNCDE", "DeepSurv", *CPU_METHODS)
+METHODS = ("NNCDE", "DeepSurv", *CPU_METHODS)
 SUPPORTED = {
-    **{method: CENSOR_TYPES for method in (*NRT_LOSSES, "ctree", "cox", "aft")},
+    **{method: CENSOR_TYPES for method in ("ctree", "cox", "aft")},
     "NNCDE": ("exact", "right"), "DeepSurv": ("exact", "right"),
     "deep_distribution_regression": ("exact",), "iccforest": ("right", "current", "interval"),
 }
@@ -163,16 +162,13 @@ def node_preflight(device, methods, package):
     try:
         check_device(device)
         for method in sorted(set(methods)):
-            if method in NRT_LOSSES:
-                importlib.import_module(f"{package}.train_mlp")
-            else:
-                module_name, class_name = BENCHMARK_BACKENDS[method]
-                module = importlib.import_module(f"{package}.benchmark.{module_name}")
-                getattr(module, class_name)
-                if method in R_REQUIREMENTS and not module.r_backend_available():
-                    raise RuntimeError(f"{method} requires Rscript and R packages {R_REQUIREMENTS[method]}")
-                if package == "tuning" and method == "DeepSurv":
-                    importlib.import_module("optunity")
+            module_name, class_name = BENCHMARK_BACKENDS[method]
+            module = importlib.import_module(f"{package}.benchmark.{module_name}")
+            getattr(module, class_name)
+            if method in R_REQUIREMENTS and not module.r_backend_available():
+                raise RuntimeError(f"{method} requires Rscript and R packages {R_REQUIREMENTS[method]}")
+            if package == "tuning" and method == "DeepSurv":
+                importlib.import_module("optunity")
             print(f"Backend preflight passed: {method}", flush=True)
     except Exception as error:
         print(f"Node preflight failed: {type(error).__name__}: {error}", file=sys.stderr, flush=True)
@@ -261,14 +257,6 @@ def cv_splits(indices, seed, folds=4):
 def fit_model(method, data, indices, parameters, training, device, seed, package):
     seed_fit(seed)
     x, left, right = data.bounds(indices)
-    if method in NRT_LOSSES:
-        module = importlib.import_module(f"{package}.train_mlp")
-        model, history = module.fit(
-            x, left, right, 1.1 * data.max_observation(indices),
-            module.ModelConfig(**parameters),
-            module.TrainingConfig(**training, training_method=NRT_LOSSES[method]), device, verbose=False,
-        )
-        return model
     name, class_name = BENCHMARK_BACKENDS[method]
     model_class = getattr(importlib.import_module(f"{package}.benchmark.{name}"), class_name)
     kwargs = {**parameters, **training}
@@ -310,18 +298,13 @@ def evaluate(model, data, grid_size, *, method, device, package):
     # Bound prediction memory for the NNCDE expansion and deep trees.
     total = torch.zeros(())
     for indices in data.test.split(256):
-        prediction_x = data.x[indices].to(device) if method in NRT_LOSSES else data.x[indices]
+        prediction_x = data.x[indices]
         estimated = model.predict_survival(prediction_x, grid.to(prediction_x.device)).detach().cpu()
         truth = data.truth(indices, grid)
         if estimated.shape != truth.shape or not bool(torch.isfinite(estimated).all()):
             raise ValueError("Invalid survival predictions")
         total += (estimated - truth).square().sum()
     metrics = {"average_grid_sse": float(total / len(data.test))}
-    if method in NRT_LOSSES:
-        module = importlib.import_module(f"{package}.train_mlp")
-        x, left, right = data.bounds(data.test)
-        metrics.update(test_nll=module.evaluate_nll(model, x, left, right, device),
-                       test_brier=module.evaluate_brier(model, x, left, right, grid_size, device))
     if not all(math.isfinite(value) for value in metrics.values()):
         raise ValueError("Non-finite test metrics")
     return metrics

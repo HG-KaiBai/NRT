@@ -1,99 +1,82 @@
-# Regularized NLL 环境检查
+# Regularized NLL environment check
 
-检查日期：2026-10-11。检查节点：`login1`。
+Historical check: 2026-10-11, America/New_York. CPU node: `rorqual2`; GPU node: `rg12901`.
+The existing Python 3.11 runtime passed CPU and real GPU workflow validation.
+Optuna was installed and launcher paths were corrected without rebuilding the environment.
+See [the current snapshot](../environment/current/README.md) for the cleanup-time inventory.
 
-当前环境满足 regularization 新入口的依赖和 CPU 运行需求。
-Optuna 4.5.0 已在项目 `.deps` 中可用，代码会自动加载，无需再次安装。
-GPU/CUDA 实际训练尚未验证，因为当前登录节点没有可用 GPU。
+## Runtime and original snapshot
 
-## 实际使用的环境
+Entry point: `/home/y679zhao/envs/nrt-runtime/bin/python`, wrapping
+`/home/y679zhao/envs/nrt-python311/bin/python`. Activation uses
+`/home/y679zhao/envs/nrt-runtime/activate.sh`, loading StdEnv/2023, python/3.11.5,
+r/4.4.0, and cuda/12.6. PyTorch itself was built with CUDA 12.2.
 
-运行解释器：`/home/y679zhao/envs/pt/bin/python3.14`，与 `runtime.sh` 默认值一致。
-
-| 组件 | 实测版本 | 加载位置/状态 |
+| Component | Checked runtime | Historical environment/ snapshot |
 | --- | --- | --- |
-| Python | 3.14.2 | `/home/y679zhao/envs/pt` |
-| PyTorch | 2.11.0 | 主环境；CUDA build 12.9 |
-| NumPy | 2.4.2 | 主环境，Optuna 加载前后版本和路径一致 |
-| SciPy | 1.18.1 | 主环境，Sobol API 可用 |
-| pandas | 3.0.0 | 主环境，launcher 环境检查所需 |
-| Optuna | 4.5.0 | `regularization/.deps/optuna` |
-| Alembic | 1.19.1+computecanada | 项目 `.deps` |
-| SQLAlchemy | 2.0.54+computecanada | 项目 `.deps` |
-| colorlog | 6.10.1+computecanada | 项目 `.deps` |
-| tqdm | 4.67.3+computecanada | 使用主环境版本，满足依赖 |
-| PyYAML | 6.0.3+computecanada | 使用主环境版本，满足依赖 |
+| Python | 3.11.5 | 3.14.2 |
+| PyTorch | 2.6.0 | 2.11.0 |
+| NumPy | 1.26.4 | 2.4.2 |
+| SciPy | 1.15.2 | 1.18.1 |
+| pandas | 2.2.3 | 3.0.0 |
+| CUDA build | 12.2 | 12.9 |
+| cuDNN | 90201 | 91301 |
+| Optuna | 4.5.0 | Not included |
 
-Optuna wheel 的发行版元数据为 `4.5.0+computecanada`，
-`optuna.__version__` 为 `4.5.0`。
-实测 `packaging.specifiers.SpecifierSet('==4.5.0').contains(...)` 为 True，
-满足 [requirements.txt](requirements.txt) 的精确版本要求。
+Distribution metadata for torch, numpy, scipy, pandas, and optuna includes the
+`+computecanada` suffix. Optuna and missing Alembic, SQLAlchemy, colorlog, Mako,
+greenlet, PyYAML, and tqdm dependencies were installed from the local wheelhouse.
+Core packages were not upgraded. Optuna loads from the main environment; `.deps`
+is not needed. All eight original `environment/SHA256SUMS` files passed verification.
 
-## 加载方式
+The original snapshot had 57 Python distributions, versus 43 in the checked runtime:
+17 matching versions, 17 changed versions, 23 original packages absent, and 9 additional
+packages. This check established that regularization could run; it did not establish
+an exact copy of the entire original Python/R environment. Different builds or hardware
+may yield different numerical results.
 
-主环境本身没有安装 Optuna；直接在新 Python 进程中执行 `import optuna`
-会找不到模块。新入口通过 `regularization.tuning.main.optuna_module()`
-将 `regularization/.deps` 追加到搜索路径后加载 Optuna。
+## Completed historical checks
 
-因此运行 tuning 的正常入口可以使用 Optuna。追加路径没有覆盖主环境中已经
-加载的 torch、numpy、scipy、pandas，四者的版本和路径均已核对。
-项目 `.deps` 内另有 NumPy wheel，但实际使用的仍是主环境 NumPy 2.4.2。
+- `python -m pip check` found no broken requirements.
+- All nine `regularization.test_workflow` tests passed, without skips, including
+  all 35 datasets, 140 shared-support CV folds, likelihoods, KL scaling, actual
+  tuning-to-simulation execution, resumption, and configuration validation.
+- Each fixed/adaptive optimizer completed 20 startup trials and one TPE trial,
+  testing ask/tell, attributes, SQLite, and reload with lightweight substitute scores.
+- Both launchers completed a real CPU workflow: `po_interval_q0.2`, n=128,
+  2 trials, 2 folds, 3 epochs, warmup=1, depth=2, width=8, grid=8. All methods
+  succeeded: 10 CV fits, 3 tuning refits, 6 simulation fits, and a complete case CSV.
+- Shell syntax, default and overridden interpreters, and both Slurm arrays passed
+  validation, including `sbatch --test-only` for the account and H100 MIG types.
 
-请使用 `python3.14` 的完整路径。服务器默认 `python` 指向另一个 Python；
-`/home/y679zhao/envs/pt/bin/python` 文件当前也没有执行权限。
-现有 launcher 已使用可执行的 `python3.14`，无需修改。
+## Historical GPU validation
 
-## 验证结果
+Job **23015894** ran for 29 seconds on `rg12901`, completed with exit `0:0`, and
+used an NVIDIA H100 80GB HBM3 MIG 2g.20gb device (compute capability 9.0).
+With the same small configuration and `cuda_graphs=True`, it exercised fused and
+capturable Adam, split unfreezing after warmup, and graph capture/replay for two
+batch sizes. All 10 CV fits, 3 tuning refits, and 6 simulation fits passed. All nine
+final records had `status=ok`, and the summary CSV was published.
 
-- 主环境 `python3.14 -m pip check`：`No broken requirements found.`
-- 加载项目 `.deps` 后，Optuna、Alembic、SQLAlchemy、colorlog、tqdm、PyYAML
-  的当前生效运行依赖版本检查通过。
-- fixed 和 adaptive 分别执行真实 Optuna 搜索：20 个 startup + 1 个 TPE trial。
-  验证了 `multivariate=True`、`group=True`、`n_ei_candidates=48`、
-  `ask/tell`、trial user attributes、SQLite 保存及重新加载。
-  此项使用轻量目标函数检查搜索器与存储，不代表完成 200 个模型候选训练。
-- `python3.14 -m unittest regularization.test_workflow -v`：7 项全部通过，
-  包括 35 个 case 的数据一致性及真实小规模 CPU tuning → 参数 CSV → simulation → 汇总。
-- `runtime.sh`、tuning 和 testing Slurm 脚本通过 `bash -n`；新入口通过 Python 编译检查。
-- 默认搜索设置核对为 200 个候选、20 个 startup，fixed/adaptive startup 各生成 20 个配置。
+Only this short GPU check was submitted during the historical validation. The full
+35-case search and 500-replication experiment were not run as part of that check.
+The default testing 40GB MIG request passed submission checks, but that device's
+full-run time and memory use were not measured.
 
-## GPU 检查范围
-
-当前节点实测 `torch.cuda.is_available() == False`、设备数量为 0，
-`nvidia-smi` 无法连接 NVIDIA driver。PyTorch 带 CUDA 12.9 支持且提供
-`torch.cuda.CUDAGraph` API，但登录节点上的结果不能验证 GPU 节点驱动、
-CUDA graph capture 或 fused Adam 的实际执行。
-
-GPU 节点需用同一个解释器验证。实际训练入口已有设备计算 preflight；
-本次没有提交 GPU 作业、完整 HPO 或 500 次模拟。
-README 中的有限支持零似然问题属于模型/数据范围问题，与环境依赖无关。
-
-## 支持域修复复查
-
-同日于 `login2` 使用上述解释器复查：CV 已改为共用外层 80% train pool 的观测支持域，
-原先三个 case 的逐折越界问题已修复。`regularization.test_workflow` 现有 9 项测试全部通过，
-覆盖全部 35 case / 140 默认 CV fold，以及外层 test / 真实事件时间不参与支持域确定。
-三个原报错 case 另以默认 n=5000、4 折和小架构、2 trial、3 epoch 完成真实 CPU 流程：
-60 次 CV 拟合、9 次 tuning refit、9 次 simulation 拟合全部成功，CSV 导出及汇总正常。
-此次复查仍无可用 GPU，未验证 CUDA graphs 或提交完整实验。
-
-## 可复查命令
-
-在 NRT 根目录执行：
+## Recheck
 
 ```bash
-PY=/home/y679zhao/envs/pt/bin/python3.14
+cd /home/y679zhao/links/projects/def-anthree/y679zhao/NRT
+export PY=/home/y679zhao/envs/nrt-runtime/bin/python
 "$PY" -m pip check
-"$PY" -c 'from regularization.tuning.main import optuna_module; o=optuna_module(); print(o.__version__); print(o.__file__)'
 "$PY" -m unittest regularization.test_workflow -v
+bash regularization/tuning/tune_nll.sh --dry-run
+bash regularization/testing/run_nll.sh --dry-run
+# Install the added dependency from the Alliance wheelhouse if needed:
+"$PY" -m pip install --no-index -r regularization/requirements.txt
 ```
 
-迁移到新环境时，原 `environment/` 快照未包含这次新增的 Optuna。
-在恢复原 NRT 环境后，还需按 regularization 的 requirements 安装新增依赖：
-
-```bash
-"$PY" -m pip install --no-index --target regularization/.deps -r regularization/requirements.txt
-```
-
-该命令适用于本服务器已配置的 Compute Canada wheelhouse；其他服务器需要相应
-的包源。本次检查使用已经安装的 `.deps`，没有升级或修改主 Python 环境。
+Historical evidence is under `/home/y679zhao/.cache/regularization-check-20261011-Suf01o/`:
+`snapshot-comparison.json`, `python-freeze.txt`, `check_tpe.py`, `optuna.log`,
+`optuna/verification.json`, `space.json`, `cpu/`, `gpu-check.sh`, GPU job logs,
+`gpu/verification.json`, and `gpu/`. These are separate from production outputs.

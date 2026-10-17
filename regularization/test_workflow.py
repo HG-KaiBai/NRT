@@ -42,14 +42,14 @@ class WorkflowTests(unittest.TestCase):
             for case in existing.ALL_CASES:
                 with self.subTest(case=case.id):
                     args = existing_tuning.parser().parse_args([
-                        "--method", "NRT", "--output-dir", tmp, "--epochs", "3"])
+                        "--method", "NNCDE", "--output-dir", tmp, "--epochs", "3"])
                     captured = []
                     def capture(*positional, **kwargs):
                         captured.append(existing.generate(*positional, **kwargs))
                         raise StopIteration
                     with patch.object(existing_tuning, "generate", side_effect=capture):
                         with self.assertRaises(StopIteration):
-                            existing_tuning.tune_case(args, "NRT_NLL", case, [{}])
+                            existing_tuning.tune_case(args, "NNCDE", case, [{}])
                     actual, seed = tuning_data(case)
                     self.assertEqual(seed, args.seed+case.index*10_000)
                     self.assert_same_data(actual, captured[0])
@@ -61,7 +61,7 @@ class WorkflowTests(unittest.TestCase):
             spec = dict(tau=existing.horizon(case), mu=0., r=None)
             for replication in (1, 7):
                 with self.subTest(case=case.id, replication=replication):
-                    job = existing_testing.make_job(args, "NRT_NLL", case, replication, (spec, {}, {}, "hash"))
+                    job = existing_testing.make_job(args, "NNCDE", case, replication, (spec, {}, {}, "hash"))
                     request = job["request"]
                     expected = existing.generate(case, request["n_samples"], request["data_seed"],
                         request["tau"], mu=request["mu"], r=request["r"])

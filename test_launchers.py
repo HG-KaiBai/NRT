@@ -11,10 +11,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent
 LAUNCHERS = (
-    ('tuning/tune_nrt.sh', 'tuning.main', 'NRT', '0'),
     ('tuning/tune_nncde.sh', 'tuning.main', 'NNCDE', '0'),
     ('tuning/tune_deepsurv.sh', 'tuning.main', 'DeepSurv', '0'),
-    ('testing/run_nrt.sh', 'testing.simulation', 'NRT_NLL', '0'),
     ('testing/run_nncde.sh', 'testing.simulation', 'NNCDE', None),
     ('testing/run_deepsurv.sh', 'testing.simulation', 'DeepSurv', None),
     ('testing/run_cpu.sh', 'testing.simulation',
@@ -157,25 +155,16 @@ class LauncherTests(unittest.TestCase):
                             slurm=True, submit_dir=ROOT, override=root, task_id=spec[3])
 
     def test_array_boundaries_preserve_task_and_replication_arguments(self):
-        for spec, tasks in (
-            (LAUNCHERS[0], (34, 35, 69, 70, 104)),
-            (LAUNCHERS[1], (14,)),
-            (LAUNCHERS[2], (14,)),
-            (LAUNCHERS[3], (1, 2)),
-            (LAUNCHERS[6], (500,)),
-        ):
+        for spec, tasks in ((LAUNCHERS[0], (14,)), (LAUNCHERS[1], (14,)), (LAUNCHERS[4], (500,))):
             for task in tasks:
                 expected = spec
-                if spec[0] == 'testing/run_nrt.sh':
-                    expected = (spec[0], spec[1], ('NRT_NLL', 'NRT_Brier', 'NRT_2Loss')[task], spec[3])
                 with self.subTest(script=spec[0], task=task):
                     records = self.launch(self.copied_script(spec), expected,
                                           slurm=True, submit_dir=ROOT, task_id=task)
                     self.assertEqual(len(records), 1)
                     args = records[0]['args']
                     flag = '--task-id' if spec[1].startswith('tuning.') else '--replication'
-                    if spec[0] != 'testing/run_nrt.sh':
-                        self.assertEqual(args[args.index(flag) + 1], str(task))
+                    self.assertEqual(args[args.index(flag) + 1], str(task))
 
     def run_failure(self, **overrides):
         env = {**self.env, 'SLURM_JOB_ID': '1234', 'SLURM_ARRAY_JOB_ID': '1200',

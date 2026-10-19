@@ -27,10 +27,13 @@ if [[ ! -r "$NRT_ROOT/runtime.sh" ]]; then
   exit 2
 fi
 source "$NRT_ROOT/runtime.sh"
+DATASET=${DATASET:-support}
+search_args=()
+if [[ -n ${NRT_SEARCH_SPACE:-} ]]; then search_args+=(--nrt-search-space "$NRT_SEARCH_SPACE"); fi
 groups=(Cox Ctree ICcforest)
 task=${SLURM_ARRAY_TASK_ID:-${TASK_ID:-0}}
 if ! [[ $task =~ ^[0-2]$ ]]; then echo 'TASK_ID must be 0..2' >&2; exit 2; fi
 nrt_run "$PY" -u -m realworld.run run --methods "${groups[$task]}" \
-  --data "${DATA_CSV:-$NRT_ROOT/realworld/data/support/support_deepsurv.csv}" \
-  --output-dir "${OUTDIR:-$NRT_ROOT/realworld/output/support}" \
-  --device cpu --threads "${SLURM_CPUS_PER_TASK:-4}" "$@"
+  --dataset "$DATASET" --data "${DATA_CSV:-$NRT_ROOT/realworld/data/$DATASET/${DATASET}_deepsurv.csv}" \
+  --output-dir "${OUTDIR:-$NRT_ROOT/realworld/output/$DATASET}" \
+  --device cpu --threads "${SLURM_CPUS_PER_TASK:-4}" "${search_args[@]}" "$@"

@@ -1,4 +1,4 @@
-"""Reuse current NRT Sobol/anchor+TPE search and the complete NNCDE grid."""
+"""Local NRT Sobol/anchor+TPE search and the complete NNCDE grid."""
 from dataclasses import asdict, replace
 import gc
 import itertools
@@ -12,7 +12,7 @@ import torch
 
 from regularization.model import observed_upper_bound
 from regularization.train import fit_raw_time_kl
-from regularization.tuning.main import SearchConfig, startup, suggest, optuna_module
+from .nrt_search import BASELINE, SearchConfig, startup, suggest, optuna_module
 from regularization.unified_nll.nll_cv_train import NLLCVOptimization
 from regularization.unified_nll.train import TrainingConfig
 from regularization.unified_nll.tuning_model import Architecture
@@ -24,9 +24,10 @@ from .models import MemoryBoundNNCDE
 NRT_METHODS = ("fixed_nll_cv", "adaptive_nll_cv", "fixed_at_adaptive_architecture")
 
 
-def default_config(smoke=False):
-    config = dict(profile="full", seed=123, fold_seed=321, folds=4,
-                  nrt_search=asdict(SearchConfig()),
+def default_config(smoke=False, search_space=None):
+    search_defaults = SearchConfig()
+    config = dict(profile="full", seed=123, fold_seed=search_defaults.fold_seed, folds=search_defaults.folds,
+                  nrt_search=asdict(search_defaults), nrt_baseline=dict(BASELINE),
                   nrt_training=asdict(TrainingConfig(patience=50)),
                   nrt_optimization=asdict(NLLCVOptimization()),
                   nncde_grid=NNCDE_GRID, nncde_epochs=200, nncde_patience=20,
@@ -43,16 +44,47 @@ def default_config(smoke=False):
         config["nrt_training"].update(epochs=3, patience=2, validation_every=1, cuda_graphs=False)
         config["nrt_optimization"]["warmup_epochs"] = 1
     config["nrt_search"].update(folds=config["folds"], fold_seed=config["fold_seed"])
+    if search_space is not None:
+        overrides = json.loads(search_space.read_text())
+        if not isinstance(overrides, dict) or set(overrides) - {"search", "baseline"}:
+            raise ValueError("NRT search JSON supports only search and baseline objects")
+        for key, destination in (("search", "nrt_search"), ("baseline", "nrt_baseline")):
+            values = overrides.get(key, {})
+            if not isinstance(values, dict) or set(values) - set(config[destination]):
+                raise ValueError(f"Unknown NRT {key} settings")
+            config[destination].update(values)
+        config["folds"] = config["nrt_search"]["folds"]
+        config["fold_seed"] = config["nrt_search"]["fold_seed"]
+    search = SearchConfig(**config["nrt_search"])
+    integer_fields = ("trials", "initial_trials", "folds", "fold_seed", "search_seed",
+                      "search_fit_seed", "depth_min", "depth_max", "shared_layers_max", "private_layers_max")
+    if any(type(getattr(search, key)) is not int for key in integer_fields):
+        raise ValueError("NRT budgets, seeds, depths and layer limits must be integers")
+    baseline = config["nrt_baseline"]
+    if (any(type(baseline[k]) is not int or baseline[k] < (0 if k == "shared_layers" else 1)
+            for k in ("depth", "shared_layers", "shared_width", "private_width", "private_layers"))
+            or not 0 <= baseline["regularization_strength"] < float("inf")
+            or not 0 <= baseline["split_min"] < .5
+            or not 0 < baseline["total_width_floor"] < 1):
+        raise ValueError("Invalid local NRT baseline configuration")
+    if (not 1 <= search.initial_trials <= search.trials or config["folds"] < 2
+            or not 1 <= search.depth_min <= search.depth_max
+            or not search.widths or len(set(search.widths)) != len(search.widths)
+            or any(not isinstance(w, int) or w < 1 for w in search.widths)
+            or search.shared_layers_max < 0 or search.private_layers_max < 1
+            or not 0 <= search.strength_max < float("inf")):
+        raise ValueError("Invalid local NRT search configuration")
+    config["nrt_search"].update(folds=config["folds"], fold_seed=config["fold_seed"])
     return config
 
 
-def nrt_settings(config):
-    return (SearchConfig(**config["nrt_search"]), Architecture(x_dim=14),
+def nrt_settings(config, x_dim=14):
+    return (SearchConfig(**config["nrt_search"]), Architecture(**config["nrt_baseline"], x_dim=x_dim),
             TrainingConfig(**config["nrt_training"]), NLLCVOptimization(**config["nrt_optimization"]))
 
 
 def score_nrt(data, splits, architecture, config, directory, adaptive, device):
-    _, _, training, optimization = nrt_settings(config)
+    _, _, training, optimization = nrt_settings(config, data.x.shape[1])
     optimization = replace(optimization, learn_splits=adaptive)
     upper = observed_upper_bound(data.bounds(data.train))
     records = []
@@ -81,7 +113,7 @@ def select_nrt(method, data, splits, config, output, device):
     path = directory / "selection.json"
     if path.exists():
         return json.loads(path.read_text())
-    search, baseline, _, _ = nrt_settings(config)
+    search, baseline, _, _ = nrt_settings(config, data.x.shape[1])
     if method == NRT_METHODS[2]:
         with writer_lock(output / NRT_METHODS[1]):
             adaptive_selection = select_nrt(NRT_METHODS[1], data, splits, config, output, device)

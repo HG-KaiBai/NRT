@@ -24,5 +24,6 @@ if [[ ! -r "$NRT_ROOT/runtime.sh" ]]; then
   exit 2
 fi
 source "$NRT_ROOT/runtime.sh"
-nrt_run "$PY" -m realworld.run summarize \
-  --output-dir "${OUTDIR:-$NRT_ROOT/realworld/output/support}" "$@"
+DATASET=${DATASET:-support}
+nrt_run "$PY" -m realworld.run summarize --dataset "$DATASET" \
+  --output-dir "${OUTDIR:-$NRT_ROOT/realworld/output/$DATASET}" "$@"

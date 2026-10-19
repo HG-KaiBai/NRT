@@ -7,17 +7,17 @@ import unittest
 
 import numpy as np
 import torch
-from sksurv.metrics import brier_score, integrated_brier_score
+from sksurv.metrics import brier_score, integrated_brier_score, concordance_index_ipcw, concordance_index_censored
 from sksurv.util import Surv
 
-from .data import FEATURES, load_support
-from .metrics import evaluate, ipcw_brier, evaluation_grid
-from .models import breslow_loss, MemoryBoundNNCDE, support_parameters
+from .data import FEATURES, load_support, load_metabric
+from .metrics import evaluate, ipcw_brier, evaluation_grid, concordance_tau
+from .models import breslow_loss, MemoryBoundNNCDE, support_parameters, metabric_parameters
 from .run import METHODS, summarize
-from .tuning import default_config
+from .tuning import default_config, nrt_settings
 from testing.benchmark.nncde.model import NNCDE
 from tuning.main import NNCDE_GRID
-from regularization.tuning.main import SearchConfig
+from .nrt_search import SearchConfig, startup, suggest
 from regularization.workflow import writer_lock
 from dataclasses import asdict
 
@@ -26,6 +26,82 @@ class RealWorldTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         torch.set_num_threads(1)
+
+    def test_metabric_data_and_preset(self):
+        data = load_metabric()
+        self.assertEqual((len(data.train), len(data.test), data.x.shape[1]), (1523, 381, 9))
+        self.assertEqual(data.time_unit, "months")
+        self.assertEqual(int(data.event[data.train].sum()), 887)
+        self.assertEqual(int(data.event[data.test].sum()), 216)
+        self.assertEqual(float(data.time[data.test].min()), 0.)
+        self.assertFalse(bool(data.event[data.time == 0].any()))
+        self.assertEqual(nrt_settings(default_config(), data.x.shape[1])[1].x_dim, 9)
+        paper = metabric_parameters()
+        self.assertEqual(paper["hidden_layers"], (42, 42, 42))
+        for key, value in dict(learning_rate=0.0020065103592061526,
+                dropout=0.034404296875000004, lr_decay=0.00055220703125,
+                momentum=0.8109013671875, l2_reg=4.6593974609375).items():
+            self.assertEqual(paper[key], value)
+        self.assertEqual(paper["activation"], "selu")
+        self.assertFalse(paper["batch_norm"])
+        self.assertTrue(paper["standardize"])
+        train, test = data.outcomes(data.train), data.outcomes(data.test)
+        grid, lower, _ = evaluation_grid(train, landmarks=data.landmarks)
+        survival = np.broadcast_to(np.exp(-grid / 100), (len(test), len(grid)))
+        metrics, rows, _ = evaluate(train, test, survival, grid, lower,
+                                   time_unit=data.time_unit, landmarks=data.landmarks)
+        self.assertEqual(metrics["c_index_ipcw"], .5)
+        self.assertTrue(np.isfinite(metrics["integrated_brier_score"]))
+        self.assertIn("brier_60m", metrics)
+        self.assertNotIn("brier_365d", metrics)
+        self.assertEqual(rows[-1]["time_unit"], "months")
+
+    def test_local_search_override_and_narrow_startup(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "search.json"
+            path.write_text(json.dumps(dict(search=dict(depth_min=2, depth_max=2,
+                widths=[8], shared_layers_max=0, private_layers_max=1,
+                strength_max=0., folds=3))))
+            config = default_config(search_space=path)
+            self.assertEqual(config["folds"], 3)
+            self.assertEqual(default_config()["nrt_search"]["widths"], (16, 32, 64, 128))
+            search, baseline, _, _ = nrt_settings(config, 9)
+            import optuna
+            for adaptive in (False, True):
+                anchors = startup(search, baseline, adaptive, 12)
+                self.assertEqual(len(anchors), 1)
+                study = optuna.create_study()
+                study.enqueue_trial(anchors[0])
+                architecture = suggest(study.ask(), search, baseline, adaptive)
+                self.assertEqual(architecture.depth, 2)
+                self.assertEqual(architecture.private_width, 8)
+                self.assertEqual(architecture.shared_width, 8)
+                self.assertEqual(architecture.private_layers, 1)
+                self.assertEqual(architecture.regularization_strength, 0.)
+                self.assertEqual(architecture.x_dim, 9)
+            path.write_text('{"search": {"typo": 1}}')
+            with self.assertRaisesRegex(ValueError, "Unknown"):
+                default_config(search_space=path)
+            path.write_text('{"search": {"depth_min": 8, "depth_max": 2}}')
+            with self.assertRaisesRegex(ValueError, "Invalid"):
+                default_config(search_space=path)
+
+    def test_uno_concordance_uses_train_weights_and_keeps_late_comparators(self):
+        train = Surv.from_arrays([1, 0, 1, 0, 1, 0], [1, 2, 3, 4, 8, 10])
+        test = Surv.from_arrays([1, 1, 1, 0], [1.5, 3.5, 7., 12.])
+        grid = np.array([0., 1., 3., 5., 8.])
+        survival = np.exp(-np.array([1., 4., 2., 3.])[:, None] * grid / 10.)
+        metrics, _, risk = evaluate(train, test, survival, grid, 0., native_risk=[1, 4, 2, 3])
+        tau = concordance_tau(train)
+        self.assertLess(tau, 10.)
+        self.assertEqual(metrics["c_index_ipcw_tau"], tau)
+        self.assertAlmostEqual(metrics["c_index_ipcw"], concordance_index_ipcw(train, test, risk, tau=tau)[0])
+        self.assertAlmostEqual(metrics["c_index_ipcw_native_risk"],
+                               concordance_index_ipcw(train, test, [1, 4, 2, 3], tau=tau)[0])
+        self.assertNotAlmostEqual(metrics["c_index_ipcw"],
+                                  concordance_index_censored(test["event"], test["time"], risk)[0])
+        self.assertNotIn("c_index", metrics)
+        self.assertNotIn("test_nll", metrics)
 
     def test_original_data_and_train_only_preprocessing(self):
         data = load_support()
@@ -55,15 +131,20 @@ class RealWorldTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             evaluation_grid(train, size=1)
 
-    def test_full_budget_and_paper_preset(self):
+    def test_full_budget_and_support_preset(self):
         config = default_config()
         self.assertEqual(config["nrt_search"], asdict(SearchConfig()))
         self.assertEqual(config["nncde_grid"], NNCDE_GRID)
         self.assertEqual((config["folds"], config["nncde_epochs"], config["nncde_patience"]), (4, 200, 20))
         paper = support_parameters()
-        self.assertEqual(paper["hidden_layers"], (44,))
-        self.assertAlmostEqual(paper["learning_rate"], .047277902766138385)
-        self.assertAlmostEqual(paper["l2_reg"], 8.1196630859375)
+        self.assertEqual(paper["hidden_layers"], (33, 33, 33))
+        self.assertAlmostEqual(paper["learning_rate"], .03279227024343838)
+        self.assertAlmostEqual(paper["l2_reg"], 3.54434228515625)
+        self.assertEqual(paper["dropout"], 0.1982763671875)
+        self.assertEqual(paper["lr_decay"], 0.000645986328125)
+        self.assertEqual(paper["momentum"], 0.9450444335937499)
+        self.assertEqual(paper["activation"], "selu")
+        self.assertFalse(paper["batch_norm"])
         self.assertTrue(paper["standardize"])
 
     def test_ipcw_matches_scikit_survival_and_ibs(self):
@@ -91,11 +172,11 @@ class RealWorldTests(unittest.TestCase):
         # event at t=1 contributes, with its positive denominator G(1).
         np.testing.assert_allclose([r["brier_ipcw"] for r in rows], [0., .15625, .03125])
         self.assertEqual(rows[-1]["censoring_survival"], 0.)
-        self.assertEqual(result["evaluation_start_days"], 0.)
-        self.assertEqual(result["evaluation_end_days"], 2.)
+        self.assertEqual(result["evaluation_start"], 0.)
+        self.assertEqual(result["evaluation_end"], 2.)
         self.assertAlmostEqual(result["ipcw_brier_integral"], .171875)
         self.assertAlmostEqual(result["integrated_brier_score"], .0859375)
-        self.assertEqual(result["c_index"], 1.)
+        self.assertEqual(result["c_index_ipcw"], 1.)
         np.testing.assert_allclose(risk, [-1.125, -1.5])
 
     def test_zero_censoring_survival_for_required_event_is_rejected(self):
@@ -119,7 +200,7 @@ class RealWorldTests(unittest.TestCase):
             metrics, rows, _ = evaluate(train, test, survival, grid, low)
         self.assertTrue(np.isfinite(metrics["integrated_brier_score"]))
         self.assertEqual(metrics["min_censoring_survival"], 0.)
-        self.assertEqual(rows[-1]["time_days"], 2029.)
+        self.assertEqual(rows[-1]["time"], 2029.)
         self.assertAlmostEqual(metrics["ipcw_brier_integral"],
                                metrics["integrated_brier_score"] * high)
         # The public reference API accepts only interior test-follow-up times.
@@ -151,11 +232,11 @@ class RealWorldTests(unittest.TestCase):
                 comparison = list(csv.DictReader(stream))
             self.assertEqual(len(comparison), 8)
             for row in comparison:
-                self.assertEqual(float(row["c_index"]), 1.)
+                self.assertEqual(float(row["c_index_ipcw"]), 1.)
                 self.assertAlmostEqual(float(row["integrated_brier_score"]), .0859375)
                 self.assertAlmostEqual(float(row["ipcw_brier_integral"]), .171875)
-                self.assertEqual(float(row["evaluation_start_days"]), 0.)
-                self.assertEqual(float(row["evaluation_end_days"]), 2.)
+                self.assertEqual(float(row["evaluation_start"]), 0.)
+                self.assertEqual(float(row["evaluation_end"]), 2.)
 
     def test_ipcw_uncensored_and_late_test_followup(self):
         train = Surv.from_arrays([True, True, True], [1., 5., 10.])

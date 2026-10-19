@@ -29,18 +29,27 @@ cd "$NRT_ROOT"
 mkdir -p realworld/log
 source "$NRT_ROOT/runtime.sh"
 export PY
-export OUTDIR=${OUTDIR:-$NRT_ROOT/realworld/output/support}
-export DATA_CSV=${DATA_CSV:-$NRT_ROOT/realworld/data/support/support_deepsurv.csv}
+export DATASET=${DATASET:-support}
+if [[ "$DATASET" != support && "$DATASET" != metabric ]]; then
+  echo 'DATASET must be support or metabric' >&2; exit 2
+fi
+export OUTDIR=${OUTDIR:-$NRT_ROOT/realworld/output/$DATASET}
+export DATA_CSV=${DATA_CSV:-$NRT_ROOT/realworld/data/$DATASET/${DATASET}_deepsurv.csv}
+search_args=()
+if [[ -n ${NRT_SEARCH_SPACE:-} ]]; then
+  export NRT_SEARCH_SPACE
+  search_args+=(--nrt-search-space "$NRT_SEARCH_SPACE")
+fi
 nrt_run "$PY" -m realworld.run preflight --device cpu
-nrt_run "$PY" -m realworld.run prepare --data "$DATA_CSV" --output-dir "$OUTDIR"
+nrt_run "$PY" -m realworld.run prepare --dataset "$DATASET" --data "$DATA_CSV" --output-dir "$OUTDIR" "${search_args[@]}"
 # Explicit paths also support NRT_ROOT overrides; the log directory exists now.
 submit_args=(--parsable --export=ALL --chdir="$NRT_ROOT"
   --output="$NRT_ROOT/realworld/log/%x-%A_%a.out"
   --error="$NRT_ROOT/realworld/log/%x-%A_%a.err")
-gpu=$(sbatch "${submit_args[@]}" "$NRT_ROOT/realworld/run_gpu.sh")
-cpu=$(sbatch "${submit_args[@]}" "$NRT_ROOT/realworld/run_cpu.sh")
+gpu=$(sbatch "${submit_args[@]}" --job-name="${DATASET}_gpu" "$NRT_ROOT/realworld/run_gpu.sh")
+cpu=$(sbatch "${submit_args[@]}" --job-name="${DATASET}_cpu" "$NRT_ROOT/realworld/run_cpu.sh")
 gpu=${gpu%%;*}
 cpu=${cpu%%;*}
-summary=$(sbatch "${submit_args[@]}" --dependency="afterok:$gpu:$cpu" "$NRT_ROOT/realworld/summarize.sh")
+summary=$(sbatch "${submit_args[@]}" --job-name="${DATASET}_summary" --dependency="afterok:$gpu:$cpu" "$NRT_ROOT/realworld/summarize.sh")
 summary=${summary%%;*}
 printf 'GPU array: %s\nCPU array: %s\nSummary: %s\nCSV: %s/comparison.csv\n' "$gpu" "$cpu" "$summary" "$OUTDIR"

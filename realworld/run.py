@@ -1,4 +1,4 @@
-"""SUPPORT: python -m realworld.run {prepare,preflight,run,summarize}.
+"""SUPPORT/METABRIC: python -m realworld.run {prepare,preflight,run,summarize}.
 
 From the NRT directory, submit the full-budget server analysis with:
     bash realworld/submit_support.sh
@@ -27,9 +27,9 @@ import numpy as np
 import torch
 
 from . import ROOT, NRT_ROOT
-from .data import DEFAULT_DATA, FEATURES, load_support
-from .metrics import evaluate, evaluation_grid
-from .models import PaperCox, SupportDeepSurv, MemoryBoundNNCDE, support_parameters
+from .data import DATASETS, load_data
+from .metrics import evaluate, evaluation_grid, concordance_tau
+from .models import PaperCox, SupportDeepSurv, MemoryBoundNNCDE, deepsurv_parameters
 from .tuning import NRT_METHODS, default_config, nrt_settings, select_nrt, select_nncde
 from regularization.model import observed_upper_bound
 from regularization.train import fit_raw_time_kl
@@ -57,7 +57,9 @@ def manifest_lock(output):
 
 def source_hash():
     paths = list(ROOT.glob("*.py"))
-    paths += list((NRT_ROOT / "regularization").rglob("*.py"))
+    # Real-world search does not depend on regularization/tuning defaults.
+    paths += [NRT_ROOT / "regularization" / name for name in ("model.py", "train.py", "workflow.py")]
+    paths += list((NRT_ROOT / "regularization/unified_nll").rglob("*.py"))
     paths += list((NRT_ROOT / "testing/benchmark").rglob("*.py"))
     paths += list((NRT_ROOT / "testing/benchmark").rglob("*.R"))
     paths += [NRT_ROOT / "workflow.py", NRT_ROOT / "tuning/main.py"]
@@ -101,13 +103,16 @@ def preflight(methods, device):
 
 
 def initialize(output, data, config):
-    grid, lower, upper = evaluation_grid(data.outcomes(data.train), config["grid_size"])
+    grid, lower, upper = evaluation_grid(data.outcomes(data.train), config["grid_size"], data.landmarks)
     splits = cv_splits(data.train, config["fold_seed"], config["folds"])
-    request = dict(schema_version=2, dataset="SUPPORT", dataset_sha256=data.sha256,
+    request = dict(schema_version=3, dataset=data.name.upper(), time_unit=data.time_unit, dataset_sha256=data.sha256,
                    source_sha256=source_hash(), config=config,
                    train_indices=data.train.tolist(), test_indices=data.test.tolist(),
-                   features=FEATURES, evaluation_grid=grid.tolist(),
-                   evaluation_start_days=lower, evaluation_end_days=upper,
+                   features=data.features, evaluation_grid=grid.tolist(),
+                   evaluation_start=lower, evaluation_end=upper,
+                   c_index_ipcw_tau=concordance_tau(data.outcomes(data.train)),
+                   concordance_definition="Uno_IPCW_train_KM_events_before_tau",
+                   landmarks=list(data.landmarks),
                    evaluation_support="zero_to_max_observed_training_time",
                    nrt_upper_bound=observed_upper_bound(data.bounds(data.train)),
                    cv_validation_indices=[v.tolist() for _, v in splits],
@@ -167,7 +172,7 @@ def run_method(method, data, config, splits, grid, lower, output, request_hash, 
             if method in NRT_METHODS:
                 # Server launcher keeps adaptive and matched control in one worker.
                 selection = select_nrt(method, data, splits, config, output, device)
-                _, _, training, optimization = nrt_settings(config)
+                _, _, training, optimization = nrt_settings(config, data.x.shape[1])
                 from regularization.unified_nll.tuning_model import Architecture
                 architecture = Architecture(**selection["parameters"])
                 optimization = replace(optimization, learn_splits=method == NRT_METHODS[1])
@@ -183,7 +188,7 @@ def run_method(method, data, config, splits, grid, lower, output, request_hash, 
                     patience=config["nncde_patience"], seed=config["seed"], device=device)
                 model.fit(*data.bounds(data.train), censor_type="right")
             elif method == "DeepSurv":
-                parameters = {**support_parameters(), "epochs": config["deepsurv_epochs"]}
+                parameters = {**deepsurv_parameters(data.name), "epochs": config["deepsurv_epochs"]}
                 selection = dict(parameters=parameters, cv_metric="fixed_paper_parameters",
                     training_semantics="paper_inverse_time_decay_breslow_ties_author_output_L2")
                 model = SupportDeepSurv(**parameters, seed=config["seed"], device=device)
@@ -212,19 +217,20 @@ def run_method(method, data, config, splits, grid, lower, output, request_hash, 
                 survival = torch.cat([model.predict_survival(batch, times).cpu() for batch in batches]).double().numpy()
                 native_risk = model.predict_risk(x_test).cpu().numpy() if method in ("DeepSurv", "Cox") else None
             metrics, brier_rows, risk = evaluate(data.outcomes(data.train), data.outcomes(data.test),
-                                                survival, grid, lower, native_risk)
+                                                survival, grid, lower, native_risk,
+                                                time_unit=data.time_unit, landmarks=data.landmarks)
             save_model(model, directory, method)
             np.savez_compressed(directory / "predictions.npz", survival=survival, times=grid,
                                 risk=risk, csv_rows=data.test.numpy(),
                                 native_risk=np.array([]) if native_risk is None else native_risk)
             write_csv(directory / "brier_curve.csv", [dict(method=method, **r) for r in brier_rows])
-            result = dict(status="ok", method=method, dataset="SUPPORT", profile=config["profile"],
+            result = dict(status="ok", method=method, dataset=data.name.upper(), profile=config["profile"],
                           request_hash=request_hash, device=device, environment=versions,
                           torch_threads=torch.get_num_threads(),
                           n_train=len(data.train), n_test=len(data.test), seed=config["seed"],
                           elapsed_seconds=time.monotonic() - started, selection=selection, **metrics)
             atomic_json(path, result)
-            print(f"{method}: C-index={metrics['c_index']:.5f}, IBS={metrics['integrated_brier_score']:.5f}", flush=True)
+            print(f"{method}: IPCW C-index={metrics['c_index_ipcw']:.5f}, IBS={metrics['integrated_brier_score']:.5f}", flush=True)
         except Exception as error:
             atomic_json(path, dict(status="failed", method=method, request_hash=request_hash,
                                   error=str(error), traceback=traceback.format_exc()))
@@ -255,10 +261,11 @@ def summarize(output, *, require_complete=True):
             if require_complete:
                 raise RuntimeError(f"Only {len(results)}/{len(METHODS)} methods complete; see status.csv")
             return
-        columns = ["dataset", "profile", "method", "n_train", "n_test", "seed", "c_index",
-                   "c_index_native_risk", "integrated_brier_score", "ipcw_brier_integral",
+        columns = ["dataset", "profile", "method", "n_train", "n_test", "seed", "c_index_ipcw",
+                   "c_index_ipcw_native_risk", "c_index_ipcw_tau", "c_index_ipcw_events", "integrated_brier_score", "ipcw_brier_integral",
                    "brier_30d", "brier_90d", "brier_180d",
-                   "brier_365d", "brier_730d", "evaluation_start_days", "evaluation_end_days",
+                   "brier_365d", "brier_730d", "brier_12m", "brier_36m", "brier_60m",
+                   "brier_120m", "brier_240m", "time_unit", "evaluation_start", "evaluation_end",
                    "min_censoring_survival", "risk_definition", "elapsed_seconds"]
         write_csv(output / "comparison.csv", [{k: r.get(k) for k in columns} for r in results])
         write_csv(output / "selected_parameters.csv", [dict(method=r["method"],
@@ -276,7 +283,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("prepare", "preflight", "run", "summarize"))
     parser.add_argument("--methods", default="all")
-    parser.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    parser.add_argument("--dataset", choices=tuple(DATASETS), default="support")
+    parser.add_argument("--data", type=Path, help="Override the selected dataset CSV path")
+    parser.add_argument("--nrt-search-space", type=Path, help="Local search/baseline JSON overrides")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--device", default="cuda:0" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--threads", type=int, default=4)
@@ -288,15 +297,15 @@ def main(argv=None):
     if args.threads < 1:
         parser.error("--threads must be positive")
     torch.set_num_threads(args.threads)
-    output = (args.output_dir or ROOT / "output" / ("support_smoke" if args.smoke else "support")).resolve()
+    output = (args.output_dir or ROOT / "output" / (args.dataset + ("_smoke" if args.smoke else ""))).resolve()
     if args.command == "summarize":
         summarize(output)
         return
     if args.command == "preflight":
         print(json.dumps(preflight(methods, args.device), indent=2))
         return
-    config = default_config(args.smoke)
-    data = load_support(args.data, smoke=args.smoke, seed=config["seed"])
+    config = default_config(args.smoke, args.nrt_search_space)
+    data = load_data(args.dataset, args.data, smoke=args.smoke, seed=config["seed"])
     request_hash, splits, grid, lower = initialize(output, data, config)
     if args.command == "prepare":
         print(json.dumps(dict(output=str(output), request_hash=request_hash, dataset=data.metadata(),

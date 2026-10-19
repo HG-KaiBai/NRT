@@ -1,4 +1,4 @@
-"""SUPPORT baselines and a memory-bounded adapter for the existing NNCDE."""
+"""Real-world baselines and a memory-bounded adapter for the existing NNCDE."""
 import copy
 
 import numpy as np
@@ -10,20 +10,30 @@ from testing.benchmark.nncde.model import NNCDE, _FittedNetwork, _LogHazardNetwo
 
 
 def support_parameters():
-    """Exact SUPPORT Table-3 parameters; no external configuration file.
+    """User-specified SUPPORT preset; no external configuration file.
 
-    Source: https://github.com/jaredleekatzman/DeepSurv/blob/
-    41eed003e5b892c81e7855e400861fa7a2d9da4f/experiments/deepsurv/models/
-    support_selu_model_adam_0.json
-    Paper: https://doi.org/10.1186/s12874-018-0482-1
-    The 800 epochs come from the SUPPORT Docker runner (Table 3 omits epochs);
-    use Table 3's [44] architecture, not that runner's later [33,33,33] revision.
+    ``hidden_layers_sizes`` and ``L2_reg`` map to the adapter's ``hidden_layers``
+    and ``l2_reg``. The input width (``n_in=14``) is inferred from SUPPORT data.
+    The existing 800-epoch, full-batch Adam training settings are retained.
     """
-    return dict(hidden_layers=(44,), learning_rate=0.047277902766138385,
-                lr_decay=0.00257333984375, momentum=0.8589028320312501,
-                l2_reg=8.1196630859375, l1_reg=0., activation="selu",
-                dropout=0.2553173828125, batch_norm=False, standardize=True,
+    return dict(hidden_layers=(33, 33, 33), learning_rate=0.03279227024343838,
+                lr_decay=0.000645986328125, momentum=0.9450444335937499,
+                l2_reg=3.54434228515625, l1_reg=0., activation="selu",
+                dropout=0.1982763671875, batch_norm=False, standardize=True,
                 optimizer="adam", epochs=800, tune=False)
+
+
+def metabric_parameters():
+    """User-specified METABRIC preset; n_in=9 is inferred from the data."""
+    return dict(hidden_layers=(42, 42, 42), learning_rate=0.0020065103592061526,
+                dropout=0.034404296875000004, lr_decay=0.00055220703125,
+                momentum=0.8109013671875, l2_reg=4.6593974609375,
+                batch_norm=False, standardize=True, activation="selu",
+                l1_reg=0., optimizer="adam", epochs=800, tune=False)
+
+
+def deepsurv_parameters(dataset):
+    return {"support": support_parameters, "metabric": metabric_parameters}[dataset]()
 
 
 # Upstream parameter configuration license (retained with the embedded preset):
@@ -57,10 +67,10 @@ def breslow_loss(logits, observed, event):
 
 
 class SupportDeepSurv(DeepSurvCUDA):
-    """Table-3 parameters, paper inverse-time LR decay and Breslow ties.
+    """Dataset presets, paper inverse-time LR decay and Breslow ties.
 
     Reuses the existing Lasagne-compatible architecture, initialization and
-    output-weight L2 convention. Momentum is recorded from the paper but Adam
+    output-weight L2 convention. Momentum is recorded from the preset but Adam
     uses its ordinary beta parameters; no SGD momentum is silently added.
     """
     def _train_network(self, x, observed, event, configuration, *, epochs, seed_offset):

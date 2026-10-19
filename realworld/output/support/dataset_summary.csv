@@ -1,0 +1,3 @@
+split,n,events,censored,censoring_rate,min_days,max_days
+train,7098,4823,2275,0.32051282051282054,3.0,2029.0
+test,1775,1213,562,0.31661971830985913,3.0,2029.0

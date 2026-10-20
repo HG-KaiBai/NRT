@@ -27,6 +27,7 @@ if [[ -n ${SLURM_ARRAY_TASK_ID:-${TUNING_TASK_ID:-}} ]]; then
 fi
 nrt_run "$PY" -u -m regularization.tuning.main \
   --methods "${METHODS:-all}" --cases "${CASES:-all}" \
+  --penalty "${PENALTY:-partition_kl}" \
   --output-dir "${OUTDIR:-$NRT_ROOT/regularization/tuning/output}" \
   --n-samples "${N_SAMPLES:-5000}" --seed "${BASE_SEED:-123}" \
   --device "${DEVICE:-cuda:0}" --threads "${SLURM_CPUS_PER_TASK:-4}" \

@@ -15,6 +15,7 @@ from workflow import (ROOT as NRT_ROOT, SCHEMA_VERSION, atomic_json, check_devic
                       cv_splits, fingerprint, generate, horizon, select_cases, write_csv)
 from .unified_nll.metrics import average_grid_sse
 from .unified_nll.train import evaluate_nll
+from .model import PENALTIES
 
 ROOT = Path(__file__).resolve().parent
 METHODS = ("fixed_nll_cv", "adaptive_nll_cv", "fixed_at_adaptive_architecture")
@@ -127,6 +128,7 @@ def export_tuning(output, cases, methods):
             rows = [dict(model_name=method, data_types=r["case_id"],
                          parameters=json.dumps(r["parameters"], sort_keys=True),
                          refit_epochs=r["refit_epochs"],
+                         penalty=r.get("penalty", "partition_kl"),
                          training_config=json.dumps(r["training_config"], sort_keys=True),
                          optimization=json.dumps(r["optimization"], sort_keys=True),
                          tau=r["tau"], mu=r["mu"], r=r["r"], n_samples=r["n_samples"],
@@ -151,6 +153,7 @@ def load_hyperparameters(directory, cases, methods):
                 if row["model_name"] != method or case_id in table:
                     raise ValueError(f"invalid or duplicate row in {path}")
                 spec = dict(method=method, case_id=case_id,
+                            penalty=row.get("penalty", "partition_kl"),
                             parameters=json.loads(row["parameters"]),
                             training_config=json.loads(row["training_config"]),
                             optimization=json.loads(row["optimization"]),
@@ -160,7 +163,8 @@ def load_hyperparameters(directory, cases, methods):
                             n_samples=int(row["n_samples"]), base_seed=int(row["base_seed"]),
                             source_sha256=row["source_sha256"], tuning_hash=row["tuning_hash"])
                 fingerprint(spec)
-                if (spec["refit_epochs"] <= spec["optimization"]["warmup_epochs"]
+                if (spec["penalty"] not in PENALTIES
+                        or spec["refit_epochs"] <= spec["optimization"]["warmup_epochs"]
                         or spec["optimization"]["learn_splits"] != (method == METHODS[1])
                         or (method != METHODS[1] and spec["parameters"]["regularization_strength"] != 0)):
                     raise ValueError(f"invalid frozen fitting configuration in {path}")

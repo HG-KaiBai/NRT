@@ -30,7 +30,7 @@ def make_request(args, method, case, replication, spec):
         data_seed=args.base_seed+1_000_000+case.index*10_000+replication,
         n_samples=args.n_samples, base_seed=args.base_seed, grid_size=args.grid_size,
         simulation_source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), **{
-            key: spec[key] for key in ("parameters", "training_config", "optimization", "refit_epochs",
+            key: spec[key] for key in ("parameters", "training_config", "optimization", "refit_epochs", "penalty",
                                       "tau", "mu", "r", "source_sha256", "tuning_hash")})
 
 
@@ -55,7 +55,7 @@ def fit_replication(args, method, case, replication, spec):
             model, _ = fit_raw_time_kl(data.bounds(data.train), architecture=Architecture(**spec["parameters"]),
                 training=TrainingConfig(**spec["training_config"]),
                 optimization=NLLCVOptimization(**spec["optimization"]),
-                fixed_epochs=spec["refit_epochs"], seed=seed+1, device=args.device)
+                fixed_epochs=spec["refit_epochs"], seed=seed+1, device=args.device, penalty=spec["penalty"])
             result.update(evaluate(model, data, args.grid_size), fit_info=model.fit_info, status="ok")
             del model
         except Exception as error:
@@ -87,6 +87,7 @@ def summarize(output, cases, methods, replications, *, allow_incomplete=False):
                     raise ValueError(f"invalid simulation identity in {path}")
                 contract = {k: saved[k] for k in ("tuning_hash", "parameters", "training_config",
                     "optimization", "refit_epochs", "source_sha256", "simulation_source_sha256", "grid_size")}
+                contract["penalty"] = saved.get("penalty", "partition_kl")
                 if method in contracts and contracts[method] != contract:
                     raise ValueError(f"mixed configurations for {method} {case.id}")
                 contracts[method] = contract

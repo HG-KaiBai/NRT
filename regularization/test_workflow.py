@@ -14,7 +14,7 @@ import torch
 import workflow as existing
 from tuning import main as existing_tuning
 from testing import simulation as existing_testing
-from .model import RawTimeKLTree, observed_upper_bound
+from .model import RawTimeKLTree, node_mean_kl, observed_upper_bound
 from .train import fit_raw_time_kl
 from .tuning.main import main as tune, optuna_module
 from .testing.simulation import main as simulate, summarize
@@ -130,6 +130,57 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             fit_raw_time_kl(train, train, training=training, device="cpu", fixed_epochs=3)
 
+    def test_node_mean_kl_weights_scale_and_gradients(self):
+        # Root fraction=.2, children=.6 and .5: three equally weighted nodes.
+        widths = torch.tensor([[.12, .08, .4, .4]], dtype=torch.float64, requires_grad=True)
+        twice_kl = lambda r: -math.log(4*r*(1-r))
+        expected = (twice_kl(.2) + twice_kl(.6) + twice_kl(.5))/3
+        torch.testing.assert_close(node_mean_kl(widths, 2), widths.new_tensor([expected]))
+        old = -widths.mul(4).log().mean()
+        self.assertAlmostEqual(float(old), (twice_kl(.2)+(twice_kl(.6)+twice_kl(.5))/2)/2)
+        self.assertNotAlmostEqual(float(old), expected)
+        torch.testing.assert_close(node_mean_kl(widths*110, 2), node_mean_kl(widths, 2))
+        self.assertTrue(torch.autograd.gradcheck(lambda w: node_mean_kl(w, 2), (widths,)))
+        # At depth one, the old and new normalizations are identical.
+        single = torch.tensor([[.3, .7]], dtype=torch.float64)
+        torch.testing.assert_close(node_mean_kl(single, 1), -2*(single*2).log().mean(dim=-1))
+        torch.testing.assert_close(node_mean_kl(torch.ones(3, 256, dtype=torch.float64), 8),
+                                   torch.zeros(3, dtype=torch.float64))
+        with self.assertRaises(ValueError):
+            node_mean_kl(widths, 3)
+        with self.assertRaises(ValueError):
+            RawTimeKLTree(penalty="unknown")
+
+    def test_node_penalty_uses_effective_widths_and_ignores_mass(self):
+        arch = Architecture(depth=3, private_width=8, private_layers=1, total_width_floor=.2)
+        model = RawTimeKLTree(arch, 11., NLLCVOptimization(warmup_epochs=0), penalty="node_mean_kl")
+        x = torch.zeros(2, 6)
+        observed = model.prepare(x, torch.ones(2), torch.ones(2))
+        with torch.no_grad():
+            model.split_head.bias.copy_(torch.linspace(-2., 2., 7))
+        widths = model(x).width.detach()
+        # Independent top-down reconstruction, rather than raw network rho.
+        expected = widths.new_zeros(2)
+        for level in range(arch.depth):
+            nodes = widths.reshape(2, 2**level, 2, -1).sum(dim=-1)
+            r = nodes[:, :, 0]/nodes.sum(dim=-1)
+            expected -= (4*r*(1-r)).log().sum(dim=-1)/7
+        nll, penalty = model.terms(observed)
+        torch.testing.assert_close(penalty, expected.mean())
+        raw_rho = model.rho(x).double()
+        self.assertGreater(abs(float(penalty + (4*raw_rho*(1-raw_rho)).log().mean())), 1e-4)
+        penalty.backward()
+        self.assertTrue(torch.isfinite(model.split_head.bias.grad).all())
+        self.assertGreater(float(model.split_head.bias.grad.abs().sum()), 0.)
+        self.assertIsNone(model.mass_head.bias.grad)
+        with torch.no_grad():
+            model.mass_head.bias.fill_(1.)
+        changed_nll, changed_penalty = model.terms(observed)
+        torch.testing.assert_close(changed_penalty, penalty)
+        self.assertNotAlmostEqual(float(changed_nll), float(nll))
+        fixed = RawTimeKLTree(arch, 11., NLLCVOptimization(learn_splits=False), penalty="node_mean_kl")
+        torch.testing.assert_close(fixed.terms(observed)[1], torch.zeros((), dtype=torch.float64))
+
     def test_common_support_covers_all_35_default_cv_datasets(self):
         arch = Architecture(depth=3, private_width=8, private_layers=1)
         fold_local_failures = []
@@ -197,6 +248,12 @@ class WorkflowTests(unittest.TestCase):
         json.dumps(metrics, allow_nan=False)
 
     def test_small_tuning_simulation_resume_and_summary(self):
+        self.check_two_stage_run(METHODS, "partition_kl")
+
+    def test_node_mean_tuning_simulation_pair(self):
+        self.check_two_stage_run(METHODS[1:], "node_mean_kl")
+
+    def check_two_stage_run(self, methods, penalty):
         try:
             optuna_module()
         except ImportError:
@@ -213,27 +270,40 @@ class WorkflowTests(unittest.TestCase):
             tune_args = ["--cases", case_id, "--output-dir", str(tuning), "--n-samples", "128",
                 "--device", "cpu", "--threads", "1", "--trials", "2", "--initial-trials", "2",
                 "--folds", "2", "--epochs", "3", "--warmup-epochs", "1", "--validation-every", "1",
-                "--batch-size", "64", "--grid-size", "8", "--no-cuda-graphs", "--search-space", str(space)]
+                "--batch-size", "64", "--grid-size", "8", "--no-cuda-graphs", "--search-space", str(space),
+                "--methods", ",".join(methods), "--penalty", penalty]
             tune(tune_args)
             cases = existing.select_cases(case_id)
-            tables = load_hyperparameters(tuning/"hyper_para", cases, METHODS)
-            for method in METHODS:
+            tables = load_hyperparameters(tuning/"hyper_para", cases, methods)
+            for method in methods:
                 spec = tables[method][case_id]
+                self.assertEqual(spec["penalty"], penalty)
                 self.assertGreater(spec["refit_epochs"], 1)
                 self.assertEqual(spec["source_sha256"], source_hash())
+            adaptive = tables[METHODS[1]][case_id]["parameters"]
+            matched = tables[METHODS[2]][case_id]["parameters"]
+            self.assertEqual(matched, dict(adaptive, regularization_strength=0.))
+            if METHODS[0] not in methods:
+                self.assertFalse((tuning/METHODS[0]).exists())
+                self.assertFalse((tuning/"hyper_para"/f"{METHODS[0]}.csv").exists())
+            for path in (tuning/"studies"/case_id).glob("**/fold_*.json"):
+                self.assertEqual(json.loads(path.read_text())["penalty"], penalty)
             with patch("regularization.tuning.main.fit_raw_time_kl", side_effect=AssertionError("unexpected refit")):
                 tune(tune_args)
+            with self.assertRaisesRegex(ValueError, "source/configuration changed"):
+                tune([*tune_args, "--penalty", "partition_kl" if penalty == "node_mean_kl" else "node_mean_kl"])
             sim_args = ["run", "--cases", case_id, "--hyper-dir", str(tuning/"hyper_para"),
                 "--output-dir", str(testing), "--replications", "2", "--n-samples", "128",
-                "--device", "cpu", "--threads", "1", "--grid-size", "8"]
+                "--device", "cpu", "--threads", "1", "--grid-size", "8", "--methods", ",".join(methods)]
             simulate(sim_args)
             paths = list(testing.glob("*/*/replication_*.json"))
-            self.assertEqual(len(paths), 6)
+            self.assertEqual(len(paths), 2*len(methods))
             for rep in (1, 2):
-                records = [json.loads((testing/m/case_id/f"replication_{rep:04d}.json").read_text()) for m in METHODS]
+                records = [json.loads((testing/m/case_id/f"replication_{rep:04d}.json").read_text()) for m in methods]
                 self.assertEqual(len({r["dataset_sha256"] for r in records}), 1)
                 self.assertTrue(all(r["status"] == "ok" for r in records))
                 self.assertTrue(all(r["fit_info"]["epochs_run"] == r["refit_epochs"] for r in records))
+                self.assertTrue(all(r["penalty"] == r["fit_info"]["penalty"] == penalty for r in records))
             with (testing/"tables"/f"{case_id}.csv").open() as stream:
                 rows = list(csv.DictReader(stream))
             self.assertEqual([r["replication"] for r in rows], ["1", "2", "average", "standard_deviation"])
@@ -247,16 +317,22 @@ class WorkflowTests(unittest.TestCase):
             changed["grid_size"] = 9
             paths[0].write_text(json.dumps(changed))
             with self.assertRaisesRegex(ValueError, "different datasets|mixed configurations"):
-                summarize(testing, cases, METHODS, 2)
+                summarize(testing, cases, methods, 2)
+            paths[0].write_bytes(before[paths[0]])
+            changed = json.loads(paths[0].read_text())
+            changed["penalty"] = "partition_kl" if penalty == "node_mean_kl" else "node_mean_kl"
+            paths[0].write_text(json.dumps(changed))
+            with self.assertRaisesRegex(ValueError, "mixed configurations"):
+                summarize(testing, cases, methods, 2)
             paths[0].write_bytes(before[paths[0]])
             table = testing/"tables"/f"{case_id}.csv"
             report_before = table.read_bytes()
             paths[0].unlink()
-            complete, pending = summarize(testing, cases, METHODS, 2)
+            complete, pending = summarize(testing, cases, methods, 2)
             self.assertFalse(complete)
             self.assertEqual(pending, [case_id])
             self.assertEqual(table.read_bytes(), report_before)
-            summarize(testing, cases, METHODS, 2, allow_incomplete=True)
+            summarize(testing, cases, methods, 2, allow_incomplete=True)
             with table.open() as stream:
                 partial = list(csv.DictReader(stream))
             self.assertEqual(len(partial), 4)

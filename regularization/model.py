@@ -10,6 +10,28 @@ from .unified_nll.tree import Tree, TreeState
 from .unified_nll.tuning_model import Architecture
 
 
+PENALTIES = ("partition_kl", "node_mean_kl")
+
+
+def node_mean_kl(widths, depth):
+    """Twice the mean KL(Bernoulli(.5) || Bernoulli(r_v)) over internal nodes.
+
+    Sum sibling widths bottom-up to recover effective branch proportions,
+    including the geometry's minimum-width reservation. Each of the 2**D-1
+    nodes has equal weight; neither masses nor level averaging enter this KL.
+    Returns one penalty per subject, preserving the legacy factor of two.
+    """
+    if depth < 1 or widths.ndim != 2 or widths.shape[-1] != 2**depth:
+        raise ValueError("depth must match the number of leaf widths")
+    total = widths.new_zeros(widths.shape[0])
+    for _ in range(depth):
+        children = widths.reshape(len(widths), -1, 2)
+        widths = children.sum(dim=-1)
+        log_fractions = children.log() - widths.log().unsqueeze(-1)
+        total = total - (log_fractions + math.log(2)).sum(dim=(-1, -2))
+    return total / (2**depth - 1)
+
+
 def observed_upper_bound(observed):
     x, left, right = observed
     if len(x) == 0 or left.shape != (len(x),) or right.shape != left.shape:
@@ -59,11 +81,15 @@ class RawGeometry(Tree):
 
 
 class RawTimeKLTree(NLLCVTree):
-    def __init__(self, architecture=Architecture(), upper_bound=1., optimization=NLLCVOptimization()):
+    def __init__(self, architecture=Architecture(), upper_bound=1., optimization=NLLCVOptimization(),
+                 penalty="partition_kl"):
         if not math.isfinite(upper_bound) or upper_bound <= 0:
             raise ValueError("support must be positive and finite")
+        if penalty not in PENALTIES:
+            raise ValueError(f"penalty must be one of {PENALTIES}")
         super().__init__(architecture, 1., optimization)
         self.tree = RawGeometry(architecture, upper_bound)
+        self.penalty = penalty
 
     @property
     def upper_bound(self):
@@ -83,7 +109,10 @@ class RawTimeKLTree(NLLCVTree):
     def terms(self, observations):
         state = self(observations.x)
         nll = -self.tree.loglik(state, *observations[1:]).mean()
-        penalty = (-2/self.config.depth) * (state.width/(self.upper_bound/self.tree.n_leaves)).log().mean()
+        if self.penalty == "node_mean_kl":
+            penalty = node_mean_kl(state.width, self.config.depth).mean()
+        else:
+            penalty = (-2/self.config.depth) * (state.width/(self.upper_bound/self.tree.n_leaves)).log().mean()
         return nll, penalty
 
     @torch.no_grad()

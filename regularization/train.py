@@ -14,7 +14,8 @@ from .unified_nll.tuning_model import Architecture
 
 def fit_raw_time_kl(train, valid=None, *, architecture=Architecture(),
                training=TrainingConfig(patience=50), optimization=NLLCVOptimization(),
-               seed=101, device="cuda", fixed_epochs=None, upper_bound=None):
+               seed=101, device="cuda", fixed_epochs=None, upper_bound=None,
+               penalty="partition_kl"):
     """No Brier call or test input. Both methods use the same checkpoint window.
 
     Fixed rho is exactly 0.5, so the inherited width penalty is identically zero.
@@ -41,7 +42,7 @@ def fit_raw_time_kl(train, valid=None, *, architecture=Architecture(),
     upper_bound = train_upper_bound if upper_bound is None else float(upper_bound)
     if not math.isfinite(upper_bound) or upper_bound < train_upper_bound:
         raise ValueError("upper_bound must be finite and cover the train-only raw support")
-    model = RawTimeKLTree(architecture, upper_bound, optimization).to(device)
+    model = RawTimeKLTree(architecture, upper_bound, optimization, penalty=penalty).to(device)
     prepared = model.prepare(*train)
     validation = model.prepare(*valid) if valid is not None else None
     if validation is not None and not math.isfinite(_evaluate(model, validation)):
@@ -117,7 +118,7 @@ def fit_raw_time_kl(train, valid=None, *, architecture=Architecture(),
         rho = model.rho(diagnostics.x)
         info.update(rho_mean_absolute_shift=float((rho-.5).abs().mean()),
                     rho_root_mean_absolute_shift=float((rho[:, 0]-.5).abs().mean()))
-    info.update(support="raw_time_finite", upper_bound=upper_bound,
+    info.update(penalty=penalty, support="raw_time_finite", upper_bound=upper_bound,
                 max_observation=train_upper_bound/1.1)
     model.fit_info = info
     return model, history

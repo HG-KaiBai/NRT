@@ -12,7 +12,7 @@ import numpy as np
 from scipy.stats import qmc
 import torch
 
-from ..model import observed_upper_bound
+from ..model import PENALTIES, observed_upper_bound
 from ..train import fit_raw_time_kl
 from ..unified_nll.nll_cv_train import NLLCVOptimization
 from ..unified_nll.train import TrainingConfig
@@ -99,11 +99,12 @@ def suggest(trial, search, baseline, adaptive):
 
 
 def score_candidate(folder, request_hash, data, splits, architecture, training, optimization, search, device,
-                    *, upper_bound):
+                    *, upper_bound, penalty="partition_kl"):
     records = []
     for fold, (train, valid) in enumerate(splits, 1):
         path = folder/f"fold_{fold}.json"
-        expected = fingerprint(dict(request_hash=request_hash, parameters=asdict(architecture), fold=fold))
+        expected = fingerprint(dict(request_hash=request_hash, parameters=asdict(architecture),
+                                    fold=fold, penalty=penalty))
         if path.exists():
             record = json.loads(path.read_text())
             if record["request_hash"] != expected:
@@ -111,7 +112,7 @@ def score_candidate(folder, request_hash, data, splits, architecture, training, 
         else:
             model, history = fit_raw_time_kl(data.bounds(train), data.bounds(valid),
                 architecture=architecture, training=training, optimization=optimization,
-                seed=search.search_fit_seed, device=device, upper_bound=upper_bound)
+                seed=search.search_fit_seed, device=device, upper_bound=upper_bound, penalty=penalty)
             record = dict(fold=fold, request_hash=expected, n_valid=len(valid), **model.fit_info)
             atomic_json(path, record)
             atomic_json(folder/f"history_{fold}.json", history)
@@ -124,7 +125,7 @@ def score_candidate(folder, request_hash, data, splits, architecture, training, 
 
 
 def search_method(folder, request_hash, data, splits, method, search, baseline, training, optimization, device,
-                  *, upper_bound):
+                  *, upper_bound, penalty="partition_kl"):
     optuna = optuna_module()
     adaptive = method == SEARCH_METHODS[1]
     optimization = replace(optimization, learn_splits=adaptive)
@@ -148,7 +149,8 @@ def search_method(folder, request_hash, data, splits, method, search, baseline, 
         trial = optuna.trial.Trial(study, running[0]._trial_id) if running else study.ask()
         architecture = suggest(trial, search, baseline, adaptive)
         scores, _ = score_candidate(folder/"fold_cache"/f"trial_{trial.number}", request_hash,
-            data, splits, architecture, training, optimization, search, device, upper_bound=upper_bound)
+            data, splits, architecture, training, optimization, search, device,
+            upper_bound=upper_bound, penalty=penalty)
         trial.set_user_attr("parameters", asdict(architecture))
         trial.set_user_attr("scores", scores)
         study.tell(trial, scores["cv_score"])
@@ -174,7 +176,7 @@ def tune_case(args, case, methods, search, baseline, training, optimization):
     # Fold-local maxima can exclude validation tails for every architecture.
     upper_bound = observed_upper_bound(data.bounds(data.train))
     request = dict(case=asdict(case), data=metadata, search=asdict(search), parameters=asdict(baseline),
-                   training_config=asdict(training), optimization=asdict(optimization),
+                   training_config=asdict(training), optimization=asdict(optimization), penalty=args.penalty,
                    support=dict(policy="tuning_train_pool", upper_bound=upper_bound),
                    device=args.device, grid_size=args.grid_size, source_sha256=source_hash(), torch=torch.__version__,
                    optuna=optuna_module().__version__)
@@ -199,14 +201,15 @@ def tune_case(args, case, methods, search, baseline, training, optimization):
                 selected[method] = (Architecture(**saved["parameters"]), saved["scores"])
             else:
                 selected[method] = search_method(folder/method, request_hash, data, splits, method,
-                    search, baseline, training, optimization, args.device, upper_bound=upper_bound)
+                    search, baseline, training, optimization, args.device, upper_bound=upper_bound,
+                    penalty=args.penalty if method == METHODS[1] else "partition_kl")
                 architecture, scores = selected[method]
                 atomic_json(path, dict(parameters=asdict(architecture), scores=scores, request_hash=request_hash))
         if MATCHED in methods:
             architecture = replace(selected[METHODS[1]][0], regularization_strength=0.)
             scores, _ = score_candidate(folder/MATCHED, request_hash, data, splits, architecture,
                 training, replace(optimization, learn_splits=False), search, args.device,
-                upper_bound=upper_bound)
+                upper_bound=upper_bound, penalty=args.penalty)
             selected[MATCHED] = architecture, dict(scores, trial=-1)
             atomic_json(args.output_dir/MATCHED/case.id/"selection.json",
                         dict(parameters=asdict(architecture), scores=selected[MATCHED][1], request_hash=request_hash))
@@ -220,12 +223,13 @@ def tune_case(args, case, methods, search, baseline, training, optimization):
                 continue
             architecture, scores = selected[method]
             actual_optimization = replace(optimization, learn_splits=method == METHODS[1])
+            actual_penalty = args.penalty if method in (METHODS[1], MATCHED) else "partition_kl"
             start = time.monotonic()
             model, history = fit_raw_time_kl(data.bounds(data.train), architecture=architecture,
                 training=training, optimization=actual_optimization, fixed_epochs=scores["refit_epochs"],
-                seed=search.search_fit_seed, device=args.device)
+                seed=search.search_fit_seed, device=args.device, penalty=actual_penalty)
             result = dict(**metadata, method=method, status="ok", parameters=asdict(architecture),
-                training_config=asdict(training), optimization=asdict(actual_optimization),
+                training_config=asdict(training), optimization=asdict(actual_optimization), penalty=actual_penalty,
                 **scores, cv_metric="nll", **evaluate(model, data, args.grid_size),
                 fit_info=model.fit_info, elapsed_seconds=time.monotonic()-start,
                 base_seed=args.seed, dataset_sha256=dataset_hash(data),
@@ -238,6 +242,8 @@ def tune_case(args, case, methods, search, baseline, training, optimization):
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--methods", default="all")
+    p.add_argument("--penalty", choices=PENALTIES, default="partition_kl",
+                   help="adaptive penalty; simulation restores this choice from the exported CSV")
     p.add_argument("--cases", default="all")
     p.add_argument("--task-id", type=int, help="case index in --cases; one GPU owns all selected methods")
     p.add_argument("--output-dir", type=Path, default=ROOT/"tuning/output")
@@ -295,7 +301,8 @@ def main(argv=None):
         lr=args.lr, validation_every=args.validation_every, cuda_graphs=args.cuda_graphs)
     optimization = NLLCVOptimization(warmup_epochs=args.warmup_epochs, split_lr_ratio=args.split_lr_ratio)
     if args.dry_run:
-        print(f"{len(selected_cases)} cases; methods={','.join(methods)}; {search.trials} trials; {search.folds} folds")
+        print(f"{len(selected_cases)} cases; methods={','.join(methods)}; penalty={args.penalty}; "
+              f"{search.trials} trials; {search.folds} folds")
         for case in selected_cases:
             print(f"{case.id} data_seed={args.seed+case.index*10_000}")
         return

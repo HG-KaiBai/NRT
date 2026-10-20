@@ -13,7 +13,7 @@ from workflow import fingerprint
 
 # Explicit local anchors, independent of upstream Architecture defaults.
 BASELINE = dict(depth=8, shared_width=32, shared_layers=2, private_width=32,
-                private_layers=3, regularization_strength=500., split_min=.1,
+                private_layers=3, regularization_strength=500., split_min=.05,
                 total_width_floor=8e-4)
 
 
@@ -25,8 +25,8 @@ class SearchConfig:
     fold_seed: int = 321
     search_seed: int = 871
     search_fit_seed: int = 101
-    depth_min: int = 6
-    depth_max: int = 12
+    depth_min: int = 8
+    depth_max: int = 17
     widths: tuple = (16, 32, 64, 128)
     shared_layers_max: int = 3
     private_layers_max: int = 4

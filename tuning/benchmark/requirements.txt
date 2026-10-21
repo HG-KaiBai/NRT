@@ -1,2 +1,2 @@
-lifelines==0.30.3
-Optunity==1.1.1
+# All NRT workflows use the exact current-server Python environment.
+-r ../../requirements.txt

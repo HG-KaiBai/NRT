@@ -1,11 +1,11 @@
-"""Train-only IPCW and common survival-curve risk scores, with strict support checks."""
+"""Harrell/Uno concordance and train-only IPCW Brier scores on a common grid."""
 import numpy as np
 from scipy.integrate import trapezoid
-from sksurv.metrics import concordance_index_ipcw
+from sksurv.metrics import concordance_index_censored, concordance_index_ipcw
 from sksurv.nonparametric import CensoringDistributionEstimator
 
 
-def evaluation_grid(y_train, size=256, landmarks=(30, 90, 180, 365, 730)):
+def evaluation_grid(y_train, size=256):
     # Endpoints depend only on observed training follow-up, before any model fit.
     observed = np.asarray(y_train["time"], dtype=float)
     if not len(observed) or not np.isfinite(observed).all() or (observed < 0).any():
@@ -14,8 +14,7 @@ def evaluation_grid(y_train, size=256, landmarks=(30, 90, 180, 365, 730)):
     if upper <= 0 or size < 2:
         raise ValueError("Need positive maximum training follow-up and at least two grid points")
     grid = np.linspace(lower, upper, size)
-    landmarks = [t for t in landmarks if lower <= t <= upper]
-    return np.unique(np.r_[grid, landmarks]), lower, upper
+    return grid, lower, upper
 
 
 def validate_survival(survival, n, grid):
@@ -74,28 +73,26 @@ def concordance_tau(y_train):
 
 
 def evaluate(y_train, y_test, survival, grid, lower, native_risk=None, *,
-             time_unit="days", landmarks=(30, 90, 180, 365, 730)):
+             time_unit="days"):
     survival = validate_survival(survival, len(y_test), grid)
     risk = -trapezoid(survival, grid, axis=1)
     tau = concordance_tau(y_train)
-    c_index = float(concordance_index_ipcw(y_train, y_test, risk, tau=tau)[0])
+    c_index = float(concordance_index_censored(y_test["event"], y_test["time"], risk)[0])
+    c_index_ipcw = float(concordance_index_ipcw(y_train, y_test, risk, tau=tau)[0])
     selected = grid >= lower
     times = grid[selected]
     brier, g = ipcw_brier(y_train, y_test, survival[:, selected], times)
     integral = float(trapezoid(brier, times))
-    metrics = dict(c_index_ipcw=c_index, c_index_ipcw_tau=tau,
+    metrics = dict(c_index=c_index, c_index_ipcw=c_index_ipcw, c_index_ipcw_tau=tau,
                    c_index_ipcw_events=int(np.sum(y_test["event"] & (y_test["time"] < tau))),
                    time_unit=time_unit,
                    integrated_brier_score=integral / (times[-1] - times[0]),
                    ipcw_brier_integral=integral,
                    evaluation_start=float(times[0]), evaluation_end=float(times[-1]),
-                   min_censoring_survival=float(g.min()), risk_definition="negative_RMST_0_to_tau")
+                   min_censoring_survival=float(g.min()), risk_definition="negative_RMST_0_to_max_obs")
     if native_risk is not None:
         metrics["c_index_ipcw_native_risk"] = float(concordance_index_ipcw(
             y_train, y_test, np.asarray(native_risk), tau=tau)[0])
-    for landmark in landmarks:
-        match = np.flatnonzero(times == landmark)
-        metrics[f"brier_{landmark}{'d' if time_unit == 'days' else 'm'}"] = float(brier[match[0]]) if len(match) else None
     rows = [dict(time=float(t), time_unit=time_unit, brier_ipcw=float(b), censoring_survival=float(w))
             for t, b, w in zip(times, brier, g)]
     return metrics, rows, risk

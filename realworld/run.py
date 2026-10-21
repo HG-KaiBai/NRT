@@ -3,7 +3,7 @@
 From the NRT directory, submit the full-budget server analysis with:
     bash realworld/submit_support.sh
 Uses the existing environment: torch, numpy>=1.26, pandas, scipy, optuna==4.5.0,
-lifelines>=0.30,<0.31 and scikit-survival>=0.25,<0.29. No new environment is made.
+lifelines>=0.30,<0.31 and scikit-survival==0.28 on Python 3.14. No new environment is made.
 Eight-method results are exported to realworld/output/support/comparison.csv
 and brier_curves.csv only when all methods complete. --smoke is validation only.
 """
@@ -88,7 +88,7 @@ def preflight(methods, device):
         from testing.benchmark.ctree.model import _find_rscript
         executable = _find_rscript()
         if executable is None:
-            raise RuntimeError("Rscript missing: install R and packages in realworld/install_r.R")
+            raise RuntimeError("Rscript missing: source runtime.sh to load R; required packages are survival, partykit, icenReg and ICcforest")
         packages = ["survival", "partykit", "icenReg"]
         if "ICcforest" in methods:
             packages.append("ICcforest")
@@ -103,16 +103,17 @@ def preflight(methods, device):
 
 
 def initialize(output, data, config):
-    grid, lower, upper = evaluation_grid(data.outcomes(data.train), config["grid_size"], data.landmarks)
+    grid, lower, upper = evaluation_grid(data.outcomes(data.train), config["grid_size"])
     splits = cv_splits(data.train, config["fold_seed"], config["folds"])
-    request = dict(schema_version=3, dataset=data.name.upper(), time_unit=data.time_unit, dataset_sha256=data.sha256,
+    request = dict(schema_version=4, dataset=data.name.upper(), time_unit=data.time_unit, dataset_sha256=data.sha256,
                    source_sha256=source_hash(), config=config,
                    train_indices=data.train.tolist(), test_indices=data.test.tolist(),
                    features=data.features, evaluation_grid=grid.tolist(),
                    evaluation_start=lower, evaluation_end=upper,
                    c_index_ipcw_tau=concordance_tau(data.outcomes(data.train)),
+                   c_index_definition="Harrell_unweighted_test_comparable_pairs",
                    concordance_definition="Uno_IPCW_train_KM_events_before_tau",
-                   landmarks=list(data.landmarks),
+                   evaluation_grid_definition="equally_spaced_including_endpoints",
                    evaluation_support="zero_to_max_observed_training_time",
                    nrt_upper_bound=observed_upper_bound(data.bounds(data.train)),
                    cv_validation_indices=[v.tolist() for _, v in splits],
@@ -218,7 +219,7 @@ def run_method(method, data, config, splits, grid, lower, output, request_hash, 
                 native_risk = model.predict_risk(x_test).cpu().numpy() if method in ("DeepSurv", "Cox") else None
             metrics, brier_rows, risk = evaluate(data.outcomes(data.train), data.outcomes(data.test),
                                                 survival, grid, lower, native_risk,
-                                                time_unit=data.time_unit, landmarks=data.landmarks)
+                                                time_unit=data.time_unit)
             save_model(model, directory, method)
             np.savez_compressed(directory / "predictions.npz", survival=survival, times=grid,
                                 risk=risk, csv_rows=data.test.numpy(),
@@ -230,7 +231,8 @@ def run_method(method, data, config, splits, grid, lower, output, request_hash, 
                           n_train=len(data.train), n_test=len(data.test), seed=config["seed"],
                           elapsed_seconds=time.monotonic() - started, selection=selection, **metrics)
             atomic_json(path, result)
-            print(f"{method}: IPCW C-index={metrics['c_index_ipcw']:.5f}, IBS={metrics['integrated_brier_score']:.5f}", flush=True)
+            print(f"{method}: C-index={metrics['c_index']:.5f}, "
+                  f"IPCW C-index={metrics['c_index_ipcw']:.5f}, IBS={metrics['integrated_brier_score']:.5f}", flush=True)
         except Exception as error:
             atomic_json(path, dict(status="failed", method=method, request_hash=request_hash,
                                   error=str(error), traceback=traceback.format_exc()))
@@ -261,11 +263,9 @@ def summarize(output, *, require_complete=True):
             if require_complete:
                 raise RuntimeError(f"Only {len(results)}/{len(METHODS)} methods complete; see status.csv")
             return
-        columns = ["dataset", "profile", "method", "n_train", "n_test", "seed", "c_index_ipcw",
+        columns = ["dataset", "profile", "method", "n_train", "n_test", "seed", "c_index", "c_index_ipcw",
                    "c_index_ipcw_native_risk", "c_index_ipcw_tau", "c_index_ipcw_events", "integrated_brier_score", "ipcw_brier_integral",
-                   "brier_30d", "brier_90d", "brier_180d",
-                   "brier_365d", "brier_730d", "brier_12m", "brier_36m", "brier_60m",
-                   "brier_120m", "brier_240m", "time_unit", "evaluation_start", "evaluation_end",
+                   "time_unit", "evaluation_start", "evaluation_end",
                    "min_censoring_survival", "risk_definition", "elapsed_seconds"]
         write_csv(output / "comparison.csv", [{k: r.get(k) for k in columns} for r in results])
         write_csv(output / "selected_parameters.csv", [dict(method=r["method"],

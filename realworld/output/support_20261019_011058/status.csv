@@ -1,9 +1,0 @@
-method,status,error
-fixed_nll_cv,ok,
-adaptive_nll_cv,ok,
-fixed_at_adaptive_architecture,ok,
-DeepSurv,ok,
-NNCDE,ok,
-Cox,ok,
-Ctree,ok,
-ICcforest,ok,

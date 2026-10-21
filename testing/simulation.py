@@ -38,7 +38,8 @@ def hyperparameter_paths(args):
         if len(methods) != 1 or methods[0] not in neural_methods:
             raise ValueError('--hyper-file requires exactly one neural method in --methods')
         return {methods[0]: args.hyper_file}
-    return {method: args.hyper_dir / f'{method}.csv' for method in neural_methods}
+    directory = args.hyper_dir if args.hyper_dir is not None else args.tuning_dir / 'hyper_para'
+    return {method: directory / f'{method}.csv' for method in neural_methods}
 
 
 def hyperparameter_tables(args):
@@ -85,7 +86,7 @@ def hyperparameter_tables(args):
 
 
 def cpu_case_manifest(args, case):
-    """Reuse the common generator settings saved by tuning, without neural CSVs."""
+    """Read only the saved tau; simulation arguments supply all other settings."""
     path = args.tuning_dir / 'cases' / f'{case.id}.json'
     saved = json.loads(path.read_text())
     if (saved.get('schema_version') != SCHEMA_VERSION or saved.get('case_id') != case.id
@@ -98,7 +99,8 @@ def cpu_case_manifest(args, case):
     elif (isinstance(tau, bool) or not isinstance(tau, (int, float))
           or not math.isfinite(tau) or tau <= 0):
         raise ValueError(f'Missing or invalid tau in {path}')
-    return {key: saved[key] for key in ('schema_version', 'case', 'case_id', 'tau', 'mu', 'r')}
+    return dict(schema_version=SCHEMA_VERSION, case=asdict(case), case_id=case.id,
+                tau=tau, mu=args.mu, r=args.r)
 
 
 def load_spec(args, method, case):
@@ -393,12 +395,12 @@ def parser():
     p.add_argument('--summary-methods',
                    help='Automatic table columns: all or comma-separated methods; defaults to --methods for direct runs')
     p.add_argument('--cases', default='all')
-    p.add_argument('--hyper-dir', type=Path, default=ROOT / 'testing' / 'hyper_para',
-                   help='Directory containing neural <method>.csv parameter and tau tables')
+    p.add_argument('--hyper-dir', type=Path,
+                   help='Neural parameter/tau CSV directory; defaults to <tuning-dir>/hyper_para')
     p.add_argument('--hyper-file', type=Path,
                    help='Explicit CSV for a single neural method; ignores other files in --hyper-dir')
     p.add_argument('--tuning-dir', type=Path, default=ROOT / 'tuning' / 'output',
-                   help='Tuning output directory containing cases/<case_id>.json for CPU methods')
+                   help='Tuning output root: hyper_para/ for neural methods and cases/ for CPU tau')
     p.add_argument('--output-dir', type=Path, default=ROOT / 'testing' / 'output')
     p.add_argument('--replications', type=int, default=500)
     p.add_argument('--replication', type=int)
@@ -406,8 +408,8 @@ def parser():
     p.add_argument('--end-replication', type=int)
     p.add_argument('--n-samples', type=int, default=5000)
     p.add_argument('--base-seed', type=int, default=123)
-    p.add_argument('--mu', type=float, default=0.0, help='Generator mu used when tuning the CSV parameters')
-    p.add_argument('--r', type=float, help='Generator r used when tuning the CSV parameters')
+    p.add_argument('--mu', type=float, default=0.0, help='Simulation generator mu; match tau preparation and neural tuning')
+    p.add_argument('--r', type=float, help='Simulation generator r; match tau preparation and neural tuning')
     p.add_argument('--grid-size', type=int, default=256)
     p.add_argument('--device', default='cuda:0')
     p.add_argument('--parallel-fits', type=int, default=1)

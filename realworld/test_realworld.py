@@ -1,5 +1,6 @@
 """Numerical, data-isolation and export tests; integration is the --smoke run."""
 import csv
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -10,7 +11,7 @@ import torch
 from sksurv.metrics import brier_score, integrated_brier_score, concordance_index_ipcw, concordance_index_censored
 from sksurv.util import Surv
 
-from .data import FEATURES, load_support, load_metabric
+from .data import FEATURES, METABRIC_DATA, METABRIC_SHA256, load_support, load_metabric
 from .metrics import evaluate, ipcw_brier, evaluation_grid, concordance_tau
 from .models import breslow_loss, MemoryBoundNNCDE, support_parameters, metabric_parameters
 from .run import METHODS, summarize
@@ -26,6 +27,46 @@ class RealWorldTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         torch.set_num_threads(1)
+
+    def test_metabric_verified_row_orders(self):
+        # Reconstruct the original pinned bytes without reformatting values.
+        lines = METABRIC_DATA.read_bytes().splitlines(keepends=True)
+        rows = list(csv.DictReader(line.decode() for line in lines))
+        source_lines = sorted(zip(rows, lines[1:]),
+                              key=lambda pair: (pair[0]["split"], int(pair[0]["row_in_split"])))
+        original_bytes = lines[0] + b"".join(line for _, line in source_lines)
+        self.assertEqual(hashlib.sha256(original_bytes).hexdigest(), METABRIC_SHA256)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "original.csv"
+            path.write_bytes(original_bytes)
+            original = load_metabric(path)
+        current = load_metabric()
+        self.assertEqual(current.sha256, hashlib.sha256(METABRIC_DATA.read_bytes()).hexdigest())
+        self.assertEqual(original.sha256, METABRIC_SHA256)
+        self.assertEqual(current.frame[["split", "row_in_split"]].values.tolist(),
+                         [[row["split"], int(row["row_in_split"])] for row in rows])
+        self.assertEqual(current.frame.sort_values(["split", "row_in_split"]).to_dict("records"),
+                         original.frame.to_dict("records"))
+        self.assertEqual(current.metadata(), original.metadata())
+
+    def test_metabric_rejects_changed_values(self):
+        lines = METABRIC_DATA.read_bytes().splitlines(keepends=True)
+        # Change a finite time while preserving schema, IDs, and split counts.
+        fields = lines[1].decode().rstrip("\r\n").split(",")
+        fields[2] = str(float(fields[2]) + 1.)
+        lines[1] = (",".join(fields) + "\n").encode()
+        changed = b"".join(lines)
+        digest = hashlib.sha256(changed).hexdigest()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "changed.csv"
+            path.write_bytes(changed)
+            for smoke in (False, True):
+                with self.subTest(smoke=smoke):
+                    with self.assertRaisesRegex(ValueError, "METABRIC CSV checksum differs") as caught:
+                        load_metabric(path, smoke=smoke)
+                    self.assertIn(str(path), str(caught.exception))
+                    self.assertIn(digest, str(caught.exception))
+                    self.assertIn(METABRIC_SHA256, str(caught.exception))
 
     def test_metabric_data_and_preset(self):
         data = load_metabric()
@@ -46,14 +87,17 @@ class RealWorldTests(unittest.TestCase):
         self.assertFalse(paper["batch_norm"])
         self.assertTrue(paper["standardize"])
         train, test = data.outcomes(data.train), data.outcomes(data.test)
-        grid, lower, _ = evaluation_grid(train, landmarks=data.landmarks)
+        grid, lower, upper = evaluation_grid(train)
+        np.testing.assert_array_equal(grid, np.linspace(0., train["time"].max(), 256))
+        self.assertEqual(upper, train["time"].max())
         survival = np.broadcast_to(np.exp(-grid / 100), (len(test), len(grid)))
         metrics, rows, _ = evaluate(train, test, survival, grid, lower,
-                                   time_unit=data.time_unit, landmarks=data.landmarks)
+                                   time_unit=data.time_unit)
+        self.assertEqual(metrics["c_index"], .5)
         self.assertEqual(metrics["c_index_ipcw"], .5)
         self.assertTrue(np.isfinite(metrics["integrated_brier_score"]))
-        self.assertIn("brier_60m", metrics)
-        self.assertNotIn("brier_365d", metrics)
+        self.assertFalse(any(key.startswith("brier_") for key in metrics))
+        self.assertEqual(len(rows), 256)
         self.assertEqual(rows[-1]["time_unit"], "months")
 
     def test_local_search_override_and_narrow_startup(self):
@@ -98,10 +142,33 @@ class RealWorldTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["c_index_ipcw"], concordance_index_ipcw(train, test, risk, tau=tau)[0])
         self.assertAlmostEqual(metrics["c_index_ipcw_native_risk"],
                                concordance_index_ipcw(train, test, [1, 4, 2, 3], tau=tau)[0])
-        self.assertNotAlmostEqual(metrics["c_index_ipcw"],
-                                  concordance_index_censored(test["event"], test["time"], risk)[0])
-        self.assertNotIn("c_index", metrics)
+        self.assertAlmostEqual(metrics["c_index"],
+                               concordance_index_censored(test["event"], test["time"], risk)[0])
+        self.assertNotAlmostEqual(metrics["c_index_ipcw"], metrics["c_index"])
         self.assertNotIn("test_nll", metrics)
+
+    def test_harrell_concordance_counts_tied_risks_and_censoring(self):
+        train = Surv.from_arrays([True, True, True], [1., 3., 10.])
+        test = Surv.from_arrays([1, 0, 1, 1, 0], [1., 1., 2., 3., 4.])
+        grid, lower, _ = evaluation_grid(train)
+        # Seven comparable pairs: six concordant plus a tied risk for the
+        # event/censor pair at time 1. Tied risks receive half credit.
+        for rates, expected in (([4, 4, 3, 2, 1], 6.5 / 7),
+                                ([1, 1, 2, 3, 4], .5 / 7),
+                                ([1, 1, 1, 1, 1], .5)):
+            with self.subTest(rates=rates):
+                survival = np.exp(-np.array(rates)[:, None] * grid / 10.)
+                metrics, _, _ = evaluate(train, test, survival, grid, lower)
+                self.assertAlmostEqual(metrics["c_index"], expected)
+
+    def test_harrell_concordance_includes_events_after_ipcw_horizon(self):
+        train = Surv.from_arrays([True, True, True], [1., 3., 10.])
+        test = Surv.from_arrays([True, True, True], [2., 11., 12.])
+        grid, lower, _ = evaluation_grid(train)
+        survival = np.exp(-np.array([3., 1., 2.])[:, None] * grid / 10.)
+        metrics, _, _ = evaluate(train, test, survival, grid, lower)
+        self.assertAlmostEqual(metrics["c_index"], 2 / 3)
+        self.assertEqual(metrics["c_index_ipcw"], 1.)
 
     def test_original_data_and_train_only_preprocessing(self):
         data = load_support()
@@ -121,18 +188,20 @@ class RealWorldTests(unittest.TestCase):
         np.testing.assert_array_equal(grid, evaluation_grid(data.outcomes(data.train))[0])
         self.assertEqual((low, high), (0., 2029.))
         self.assertEqual((grid[0], grid[-1]), (0., 2029.))
-        self.assertEqual(len(grid), 261)
+        np.testing.assert_array_equal(grid, np.linspace(0., 2029., 256))
 
     def test_evaluation_grid_includes_zero_and_training_maximum(self):
         train = Surv.from_arrays([1, 0, 1], [5., 12., 40.])
         grid, low, high = evaluation_grid(train, size=3)
-        np.testing.assert_array_equal(grid, [0., 20., 30., 40.])
+        np.testing.assert_array_equal(grid, [0., 20., 40.])
         self.assertEqual((low, high), (0., 40.))
         with self.assertRaises(ValueError):
             evaluation_grid(train, size=1)
 
     def test_full_budget_and_support_preset(self):
         config = default_config()
+        self.assertEqual(config["grid_size"], 256)
+        self.assertEqual(default_config(smoke=True)["grid_size"], 256)
         self.assertEqual(config["nrt_search"], asdict(SearchConfig()))
         self.assertEqual(config["nncde_grid"], NNCDE_GRID)
         self.assertEqual((config["folds"], config["nncde_epochs"], config["nncde_patience"]), (4, 200, 20))
@@ -177,6 +246,7 @@ class RealWorldTests(unittest.TestCase):
         self.assertAlmostEqual(result["ipcw_brier_integral"], .171875)
         self.assertAlmostEqual(result["integrated_brier_score"], .0859375)
         self.assertEqual(result["c_index_ipcw"], 1.)
+        self.assertEqual(result["c_index"], 1.)
         np.testing.assert_allclose(risk, [-1.125, -1.5])
 
     def test_zero_censoring_survival_for_required_event_is_rejected(self):
@@ -199,6 +269,8 @@ class RealWorldTests(unittest.TestCase):
         with np.errstate(divide="raise", invalid="raise"):
             metrics, rows, _ = evaluate(train, test, survival, grid, low)
         self.assertTrue(np.isfinite(metrics["integrated_brier_score"]))
+        self.assertEqual(metrics["c_index"], .5)
+        self.assertEqual(len(rows), 256)
         self.assertEqual(metrics["min_censoring_survival"], 0.)
         self.assertEqual(rows[-1]["time"], 2029.)
         self.assertAlmostEqual(metrics["ipcw_brier_integral"],
@@ -210,7 +282,7 @@ class RealWorldTests(unittest.TestCase):
         actual = np.array([r["brier_ipcw"] for r in rows])[interior]
         np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
-    def test_comparison_exports_full_support_and_both_brier_integrals(self):
+    def test_comparison_exports_three_metrics_and_full_support(self):
         train = Surv.from_arrays([1, 0], [1., 2.])
         grid = np.array([0., 1., 2.])
         survival = np.array([[1., .5, .25], [1., .75, .5]])
@@ -232,11 +304,13 @@ class RealWorldTests(unittest.TestCase):
                 comparison = list(csv.DictReader(stream))
             self.assertEqual(len(comparison), 8)
             for row in comparison:
+                self.assertEqual(float(row["c_index"]), 1.)
                 self.assertEqual(float(row["c_index_ipcw"]), 1.)
                 self.assertAlmostEqual(float(row["integrated_brier_score"]), .0859375)
                 self.assertAlmostEqual(float(row["ipcw_brier_integral"]), .171875)
                 self.assertEqual(float(row["evaluation_start"]), 0.)
                 self.assertEqual(float(row["evaluation_end"]), 2.)
+                self.assertFalse(any(key.startswith("brier_") for key in row))
 
     def test_ipcw_uncensored_and_late_test_followup(self):
         train = Surv.from_arrays([True, True, True], [1., 5., 10.])

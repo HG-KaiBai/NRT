@@ -36,8 +36,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(actual.metadata(), expected.metadata())
         self.assertEqual(dataset_hash(actual), dataset_hash(expected))
 
-    def test_all_35_tuning_datasets_match_actual_existing_entrypoint(self):
-        self.assertEqual(len(existing.ALL_CASES), 35)
+    def test_all_29_tuning_datasets_match_actual_existing_entrypoint(self):
+        self.assertEqual(len(existing.ALL_CASES), 29)
         with tempfile.TemporaryDirectory() as tmp:
             for case in existing.ALL_CASES:
                 with self.subTest(case=case.id):
@@ -54,7 +54,7 @@ class WorkflowTests(unittest.TestCase):
                     self.assertEqual(seed, args.seed+case.index*10_000)
                     self.assert_same_data(actual, captured[0])
 
-    def test_all_35_simulation_datasets_match_existing_job_seeds(self):
+    def test_all_29_simulation_datasets_match_existing_job_seeds(self):
         args = SimpleNamespace(base_seed=123, n_samples=5000, grid_size=256,
                                device="cpu", threads_per_fit=1, force=False, output_dir=Path("unused"))
         for case in existing.ALL_CASES:
@@ -181,7 +181,7 @@ class WorkflowTests(unittest.TestCase):
         fixed = RawTimeKLTree(arch, 11., NLLCVOptimization(learn_splits=False), penalty="node_mean_kl")
         torch.testing.assert_close(fixed.terms(observed)[1], torch.zeros((), dtype=torch.float64))
 
-    def test_common_support_covers_all_35_default_cv_datasets(self):
+    def test_common_support_covers_all_29_default_cv_datasets(self):
         arch = Architecture(depth=3, private_width=8, private_layers=1)
         fold_local_failures = []
         for case in existing.ALL_CASES:

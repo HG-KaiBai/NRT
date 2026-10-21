@@ -1,4 +1,8 @@
-# Current NRT environment snapshot
+# Historical Rorqual environment snapshot
+
+For the active Fir runtime checked on 2026-10-20, use
+[the Fir environment record](../fir-20261020/README.md). The commands and inventories
+below describe the previous Python 3.11 environment, which is not installed on Fir.
 
 Captured on 2026-10-16 from the installed runtime used by regularization.
 `python-requirements.txt` contains exact distribution versions, including build

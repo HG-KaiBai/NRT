@@ -1,0 +1,13 @@
+{
+  "date": "2026-10-20",
+  "filesystem": "/home/y679zhao",
+  "space_limit_bytes": 51539607552,
+  "files_limit": 500000,
+  "available_bytes": 41570881536,
+  "available_inodes": 206095,
+  "default_run_planning_allowance_bytes": 10737418240,
+  "default_run_planning_allowance_inodes": 150000,
+  "scope": "35 node_mean_kl cases, 200 trials, 4 folds, 2 methods x 500 replications; SUPPORT and METABRIC, 200 trials each",
+  "cleanup_required": false,
+  "deleted_files": 0
+}

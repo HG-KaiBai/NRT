@@ -9,7 +9,7 @@ The penalty is restored from tuning's CSV; no testing penalty override is needed
 
 From the NRT root, run `python -m regularization.testing.simulation run` or submit
 `sbatch regularization/testing/run_nll.sh`. The default three GPU tasks each run
-one method over 35 cases and 500 replications sequentially.
+one method over 29 cases and 500 replications sequentially.
 
 The default hyperparameter directory is `regularization/tuning/output/hyper_para`.
 CSV copying is unnecessary. Training settings and fixed refit epochs come from

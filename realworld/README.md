@@ -1,6 +1,6 @@
 # Real-world survival analysis: SUPPORT and METABRIC
 
-This directory compares eight survival models on SUPPORT (14 covariates) and METABRIC (9 covariates), preserving each bundled CSV’s train/test split. Select the experiment with `--dataset support` or `--dataset metabric`. Final evaluation uses Uno IPCW C-index and IPCW Brier scores; test NLL is intentionally not added.
+This directory compares eight survival models on SUPPORT (14 covariates) and METABRIC (9 covariates), preserving each bundled CSV’s train/test split. Select the experiment with `--dataset support` or `--dataset metabric`. Final evaluation reports three main metrics: traditional Harrell C-index, Uno IPCW C-index, and integrated IPCW Brier score (IBS); test NLL is intentionally not added.
 
 
 ## 1. Data used
@@ -41,7 +41,9 @@ Its 14 feature columns, times, event indicators, and source row identifiers were
 
 The supplied [`data/metabric/metabric_deepsurv.csv`](data/metabric/metabric_deepsurv.csv) contains 1,523 training rows (887 events) and 381 test rows (216 events), with features `x00`–`x08`. Training follow-up ranges from about 0.1 to 355.2 months; test follow-up ranges from 0 to about 337.03 months. The single test observation censored at time zero is preserved. The loader permits nonnegative follow-up and does not rescale time. METABRIC survival is measured in months in the [DeepSurv paper](https://pmc.ncbi.nlm.nih.gov/articles/PMC5828433/).
 
-The supplied file is pinned by SHA-256 `ba502e364efab52916d4316e97d6020e924545bef0f88802f4d77f973cf0eeb1`. This is an integrity check of the supplied CSV, not a claim of independent verification against the authors’ HDF5. Its time unit is recorded in the manifest, result, dataset summary, and Brier curves. The METABRIC Brier landmarks are 12, 36, 60, 120, and 240 months. Scores in different time units should not be pooled across datasets.
+The bundled file matches the original supplied file byte-for-byte, including row order, with SHA-256 `ba502e364efab52916d4316e97d6020e924545bef0f88802f4d77f973cf0eeb1`. A previously supplied version sorted by follow-up time has SHA-256 `d57d0ae0415b41f3c6c727ae46ab13b8677e6cd9177de503a2ea95d61f7fb3ac`. Every field in that version matches the original file exactly when rows are matched by `(split, row_in_split)`; restoring source order reproduces the original checksum. Both verified representations are accepted, and all other checksums are rejected. This verifies equivalence to the supplied CSV, not independent verification against the authors’ HDF5. The loader retains the supplied row order, so seeded CV/smoke selections can differ between representations. Each manifest records the actual input-file hash and selected indices.
+
+Its time unit is recorded in the manifest, result, dataset summary, and Brier curves. METABRIC uses the same 256-point equally spaced evaluation grid in its original month units. Scores in different time units should not be pooled across datasets.
 
 An observed death is encoded as `L = R = time`; right censoring is encoded as `L = time`, `R = infinity`.
 
@@ -74,7 +76,7 @@ NRT estimates a conditional distribution with constant density within each leaf 
 | NRT search seed | `871` |
 | NRT fitting seed during search | `101` |
 | Test partition | Original 1,775 SUPPORT / 381 METABRIC rows, held out from fitting and selection |
-| Main evaluation-grid size | `256`, before early-time points and landmarks are added |
+| Evaluation-grid size | Exactly `256` equally spaced points from `0` to `max_obs`, including both endpoints, for full and smoke runs |
 | Default PyTorch threads | `4` |
 
 NRT and NNCDE use CV selection. DeepSurv uses a fixed preset; Cox and Ctree use fixed settings; ICcforest tunes `mtry` internally on training data. Configuration is defined in [`tuning.py`](tuning.py). NRT search defaults, anchors, Sobol startup, and TPE parameter suggestions are local to [`nrt_search.py`](nrt_search.py); they no longer import `regularization/tuning/main.py`. NRT still reuses the model/training implementation. NNCDE retains the grid from [`../tuning/main.py`](../tuning/main.py).
@@ -184,22 +186,24 @@ The ICcforest R backend additionally uses `teststat="quad"`, `testtype="Univ"`, 
 
 Every model predicts survival for the same test subjects on the same grid. [`metrics.py`](metrics.py) checks prediction shape, finiteness, probability bounds, and nonincreasing survival over time.
 
-For SUPPORT, the evaluation support is **day 0 through the maximum observed time in the training pool**, including both endpoints: `tau = max(training time) = 2,029 days`. Observed times include both deaths and right-censoring times. The test outcomes do not select or shorten this interval. The prediction/scoring grid combines 256 equally spaced points over `[0, tau]` with landmarks at 30, 90, 180, 365, and 730 days, removing duplicates. For the full dataset, this produces 261 prediction and Brier-scoring times. The NRT model support remains 2,231.9 days; that is a model-fitting bound, distinct from the evaluation endpoint.
+For both datasets, the evaluation support is **time 0 through the maximum observed time in the training pool**, including both endpoints: `max_obs = max(training time)`. Observed times include both deaths and right-censoring times. The test outcomes do not select or shorten this interval. The prediction/scoring grid is exactly `np.linspace(0, max_obs, 256)`, with no additional special points, landmarks, or event times. For SUPPORT, `max_obs = 2,029 days`; the NRT model support remains 2,231.9 days, a model-fitting bound distinct from the evaluation endpoint. Full and smoke runs both use 256 prediction and Brier-scoring times. Landmark-specific Brier columns are no longer exported.
 
 | Metric | Meaning | Preferred direction |
 | --- | --- | --- |
+| `c_index` | Traditional Harrell concordance on test outcomes, using the same negative RMST risk score as `c_index_ipcw`. Comparable pairs are unweighted and tied risks receive half credit. | Higher |
 | `c_index_ipcw` | Uno IPCW concordance using a common risk score: negative restricted mean survival time, calculated by trapezoidal integration from time 0 to the evaluation end. Higher risk means shorter predicted survival. | Higher |
 | `c_index_ipcw_native_risk` | Additional Uno IPCW concordance using native log-risk predictions, available only for DeepSurv and Cox. | Higher |
-| `integrated_brier_score` | Normalized integrated IPCW Brier score: `(1 / tau) × integral_0^tau BS_IPCW(t) dt`, calculated by trapezoidal quadrature. | Lower |
-| `ipcw_brier_integral` | Unnormalized integral `integral_0^tau BS_IPCW(t) dt`, in the dataset’s time unit. Equals `tau × integrated_brier_score`. | Lower |
-| `brier_30d`, `brier_90d`, `brier_180d`, `brier_365d`, `brier_730d` | IPCW Brier scores at the named landmarks; null outside the scoring interval. All five lie within the full-data interval. | Lower |
+| `integrated_brier_score` | Normalized integrated IPCW Brier score: `(1 / max_obs) × integral_0^max_obs BS_IPCW(t) dt`, calculated by trapezoidal quadrature. | Lower |
+| `ipcw_brier_integral` | Unnormalized integral `integral_0^max_obs BS_IPCW(t) dt`, in the dataset’s time unit. Equals `max_obs × integrated_brier_score`. | Lower |
 | `evaluation_start`, `evaluation_end`, `time_unit` | Scoring interval endpoints in the dataset’s original units. | Descriptive |
 | `min_censoring_survival` | Minimum estimated censoring survival over the scoring grid. | Diagnostic |
 | `elapsed_seconds` | Time for the current method execution, including selection work performed then, final fitting, evaluation, and artifact writing before saving the result. Reused caches affect this value. | Descriptive |
 
-The concordance implementation calls [`sksurv.metrics.concordance_index_ipcw`](https://scikit-survival.readthedocs.io/en/v0.25.0/api/generated/sksurv.metrics.concordance_index_ipcw.html), estimating censoring only from training outcomes. `c_index_ipcw_tau` is the maximum training time, or the floating-point predecessor of the first time where training censoring survival reaches zero, whichever is smaller. Events strictly before this horizon receive inverse-squared censoring weights; later subjects remain comparators. `c_index_ipcw_events` records the number of eligible test events. The concordance horizon can differ from the unchanged full-training-range Brier endpoint. Both RMST and native-risk concordance use the same horizon; Harrell concordance is no longer exported.
+Harrell concordance calls `sksurv.metrics.concordance_index_censored` using test events, observed times, and the common negative RMST risk score (`risk_definition="negative_RMST_0_to_max_obs"`). It uses all comparable test pairs without IPCW weights or a concordance-horizon cutoff. Risk scores for both C-indices are derived solely from survival predictions on the 256-point grid; observed event times used to compare outcomes do not add prediction points.
 
-METABRIC uses `[0, max(training time)]` in months for RMST and Brier scoring, and its month-based landmarks. The Brier integral has the recorded time unit. SUPPORT’s day-specific landmark columns are empty for METABRIC, and vice versa.
+Uno concordance calls [`sksurv.metrics.concordance_index_ipcw`](https://scikit-survival.readthedocs.io/en/v0.25.0/api/generated/sksurv.metrics.concordance_index_ipcw.html), estimating censoring only from training outcomes. `c_index_ipcw_tau` is the maximum training time, or the floating-point predecessor of the first time where training censoring survival reaches zero, whichever is smaller. Events strictly before this horizon receive inverse-squared censoring weights; later subjects remain comparators. `c_index_ipcw_events` records the number of eligible test events. The Uno concordance horizon can differ from the full-training-range Brier endpoint; it is not inserted into the prediction grid. Both RMST and native-risk Uno concordance use the same horizon. Native-risk Uno concordance and the unnormalized Brier integral remain supplementary diagnostics alongside the three main metrics.
+
+METABRIC uses `[0, max(training time)]` in months for RMST and Brier scoring. The Brier integral has the recorded time unit.
 
 Inverse-probability-of-censoring weights (IPCW) use a reverse Kaplan–Meier censoring estimate fitted only on training outcomes. At time `t`, observed deaths with `T <= t` contribute `S(t)^2 / G(T)`, and observations with `T > t` contribute `(1 - S(t))^2 / G(t)`. Censored observations with `T <= t` contribute zero. The sum is divided by the full test sample size. This follows the [IPCW Brier formula](https://scikit-survival.readthedocs.io/en/v0.25.0/api/generated/sksurv.metrics.brier_score.html); the normalized time average follows the [integrated Brier definition](https://scikit-survival.readthedocs.io/en/v0.25.0/api/generated/sksurv.metrics.integrated_brier_score.html).
 
@@ -233,7 +237,7 @@ Each method has its own subdirectory:
 | --- | --- |
 | `selection.json` | Selected or fixed parameters, selection criterion, and applicable CV scores/refit details. |
 | `result.json` | Metrics, runtime, device, environment, and request hash on success; error and traceback on failure. |
-| `predictions.npz` | Arrays `survival`, `times`, common `risk`, `csv_rows`, and `native_risk` (empty when unavailable). Full-data survival shape: `(1775, 261)`. |
+| `predictions.npz` | Arrays `survival`, `times`, common `risk`, `csv_rows`, and `native_risk` (empty when unavailable). Full-data survival shape: `(1775, 256)` for SUPPORT and `(381, 256)` for METABRIC. |
 | `brier_curve.csv` | Method, time and time unit, IPCW Brier score, and estimated censoring survival. |
 | `model.pt` | NRT state dictionary; DeepSurv network/normalization/baseline state; or both NNCDE network/normalization states. Reconstruction also requires the matching model code and parameter records. |
 | `history.json` | NRT epoch history or DeepSurv logged losses and learning rates. |
@@ -246,15 +250,15 @@ Each method has its own subdirectory:
 
 ## 6. Running the workflow
 
-The scripts are configured for this Rorqual server and reuse NRT's existing `runtime.sh` and `/home/y679zhao/envs/nrt-runtime/bin/python`. They use absolute project/log paths and do not depend on your submission directory. Create `realworld/log/` before submitting, since Slurm opens its logs before the script starts.
+The scripts are configured for this Fir server and reuse NRT's existing `runtime.sh` and `/home/y679zhao/envs/pt/bin/python3.14`. They use absolute project/log paths and do not depend on your submission directory. Create `realworld/log/` before submitting, since Slurm opens its logs before the script starts.
 
 Submit the full workflow from any directory:
 
 ```bash
-mkdir -p /home/y679zhao/links/projects/def-anthree/y679zhao/NRT/realworld/log
-sbatch /home/y679zhao/links/projects/def-anthree/y679zhao/NRT/realworld/submit_support.sh
+mkdir -p /home/y679zhao/projects/def-anthree/y679zhao/NRT/realworld/log
+sbatch /home/y679zhao/projects/def-anthree/y679zhao/NRT/realworld/submit_support.sh
 # METABRIC uses the same eight-method pipeline and a separate output folder:
-sbatch /home/y679zhao/links/projects/def-anthree/y679zhao/NRT/realworld/submit_metabric.sh
+sbatch /home/y679zhao/projects/def-anthree/y679zhao/NRT/realworld/submit_metabric.sh
 ```
 
 This short CPU job checks dependencies and prepares the manifest, then submits the GPU and CPU arrays and an `afterok` summary job. The child job IDs and final CSV path are printed in `realworld/log/support_submit-<jobid>.out`. If preflight or preparation fails, no child jobs are submitted. The same driver can also be run with `bash` from the login node.
@@ -262,7 +266,7 @@ This short CPU job checks dependencies and prepares the manifest, then submits t
 Alternatively, submit the arrays directly from the NRT root:
 
 ```bash
-cd /home/y679zhao/links/projects/def-anthree/y679zhao/NRT
+cd /home/y679zhao/projects/def-anthree/y679zhao/NRT
 mkdir -p realworld/log
 gpu=$(sbatch --parsable realworld/run_gpu.sh)
 cpu=$(sbatch --parsable realworld/run_cpu.sh)
@@ -274,9 +278,9 @@ sbatch --dependency="afterok:$gpu:$cpu" realworld/summarize.sh
 The direct array workers initialize the shared manifest safely themselves. For a dependency check before submitting, or to rebuild a completed summary without refitting:
 
 ```bash
-cd /home/y679zhao/links/projects/def-anthree/y679zhao/NRT
+cd /home/y679zhao/projects/def-anthree/y679zhao/NRT
 source runtime.sh
-"$PY" -m realworld.run preflight --device cpu
+nrt_python realworld.run preflight --device cpu
 "$PY" -m realworld.run summarize --output-dir realworld/output/support
 ```
 
@@ -284,7 +288,21 @@ source runtime.sh
 
 The GPU array runs fixed NRT, adaptive NRT plus its matched fixed control, NNCDE, and DeepSurv. Each GPU task requests one H100 40 GB MIG instance (`--gpus=nvidia_h100_80gb_hbm3_3g.40gb:1`), four CPUs, 32 GB host memory, and two days. The CPU array runs Cox, Ctree, and ICcforest, with four CPUs, 32 GB memory, and one day per task. Scheduler logs go to `realworld/log/`.
 
-Python requirements include the existing PyTorch, NumPy, pandas, and SciPy environment plus `optuna==4.5.0`, `lifelines>=0.30,<0.31`, and `scikit-survival==0.25.0`; see [`requirements.txt`](requirements.txt). R requires `survival`, `partykit`, `icenReg`, and `ICcforest`. The scikit-survival pin keeps this server setup compatible with the existing NumPy 1.26.4 environment; newer releases in the former broad range can require NumPy 2.
+Both CPU and GPU launchers use `python -m node_runner realworld.run ...`, as do
+preparation and summary scripts. Startup checks exercise CPU tensor/BLAS
+operations, temporary storage, Python dependencies, selected R packages, and the
+requested GPU with synchronization. Python/R module-load failures and precheck
+failures exit with status 75. Recognized propagated CUDA device-unavailable and
+driver-initialization errors also exit with status 75 through `cuda_retry.py`, which
+`runtime.sh` uses to requeue only the affected array element. The default limit is
+four requeues, controlled by `NRT_MAX_PYTHON_REQUEUES`; Slurm's restart count
+enforces the limit and logs are appended. Model/data errors, out-of-memory errors,
+and device-side assertions retain their ordinary failure status. Retry handling
+does not change numerical source fingerprints, so existing completed results and
+fold caches remain usable. Direct `python -m realworld.run` calls do not invoke
+this Slurm retry wrapper.
+
+The required environment is the exact [2026-10-21 Fir snapshot](../environment/fir-20261021/README.md): Python 3.14.2, torch 2.11.0, NumPy 2.4.2, pandas 3.0.0, SciPy 1.18.1, Optuna 4.5.0, lifelines 0.30.0, scikit-learn 1.9.1, and scikit-survival 0.28.0. Distribution build suffixes and all transitive dependencies are pinned through [`requirements.txt`](requirements.txt), which includes the common NRT inventory. R 4.4.0 uses survival 3.5-8, partykit 1.3-0, icenReg 2.0.16, and ICcforest 0.5.1, with the complete R inventory in the same snapshot. Python 3.11 and scikit-survival 0.25 are historical environments, not alternatives for reproducing the current run. Follow the [cross-server guide](../ENVIRONMENT_REPLICATION.md) before installing or submitting on another server.
 
 A separate small validation run is available:
 
@@ -298,7 +316,7 @@ A separate small validation run is available:
 
 The smoke profile uses 160 training and 80 test observations, two CV folds, two NRT trials, three NRT/NNCDE epochs, five DeepSurv epochs, and five forest trees. Its default destination is `realworld/output/<dataset>_smoke/`. Smoke outputs validate execution and are not full-data scientific results.
 
-Completed results and tuning caches can be reused. The manifest checks data, source, configuration, and Python environment fingerprints; use a new output directory when these change. The full-training-support evaluation uses manifest schema version 3 and `evaluation_support="zero_to_max_observed_training_time"`; older results (including Harrell concordance) cannot be reused under this manifest. Existing output directories are not migrated or overwritten.
+Completed results and tuning caches can be reused when their fingerprints match. The manifest checks data, source, configuration, and Python environment fingerprints; use a new output directory when these change. The three-metric evaluation with exactly 256 equally spaced grid points uses manifest schema version 4, `evaluation_support="zero_to_max_observed_training_time"`, and `evaluation_grid_definition="equally_spaced_including_endpoints"`. Older results with additional grid landmarks cannot be reused under this manifest. Existing output directories are not migrated or overwritten.
 
 ## 7. Source map
 

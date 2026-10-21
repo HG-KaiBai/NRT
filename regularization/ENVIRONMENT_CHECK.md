@@ -1,5 +1,10 @@
 # Regularized NLL environment check
 
+The fixed current-server environment was captured on 2026-10-21; see
+[the current snapshot](../environment/fir-20261021/README.md) and
+[cross-server guide](../ENVIRONMENT_REPLICATION.md) for exact package/build
+requirements. The remainder of this file is historical Rorqual evidence.
+
 Historical check: 2026-10-11, America/New_York. CPU node: `rorqual2`; GPU node: `rg12901`.
 The existing Python 3.11 runtime passed CPU and real GPU workflow validation.
 Optuna was installed and launcher paths were corrected without rebuilding the environment.

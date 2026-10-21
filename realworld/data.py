@@ -48,10 +48,6 @@ class SurvivalData:
     def features(self):
         return [f"x{i:02d}" for i in range(self.x.shape[1])]
 
-    @property
-    def landmarks(self):
-        return (30, 90, 180, 365, 730) if self.name == "support" else (12, 36, 60, 120, 240)
-
     def bounds(self, indices, scaler=None):
         x = self.x[indices]
         if scaler is not None:
@@ -79,11 +75,18 @@ class SurvivalData:
 
 METABRIC_DATA = ROOT / "data/metabric/metabric_deepsurv.csv"
 METABRIC_SHA256 = "ba502e364efab52916d4316e97d6020e924545bef0f88802f4d77f973cf0eeb1"
+# The time-sorted CSV matches every original field exactly when keyed by
+# (split, row_in_split); restoring source order reproduces METABRIC_SHA256.
+# Keep the supplied row order and accept only these verified representations.
+METABRIC_VERIFIED_SHA256 = frozenset({
+    METABRIC_SHA256,
+    "d57d0ae0415b41f3c6c727ae46ab13b8677e6cd9177de503a2ea95d61f7fb3ac",
+})
 DATASETS = {
     "support": dict(path=DEFAULT_DATA, features=FEATURES, sizes=(7098, 1775),
                     checksums=SUPPORT_VERIFIED_SHA256, time_unit="days"),
     "metabric": dict(path=METABRIC_DATA, features=[f"x{i:02d}" for i in range(9)],
-                     sizes=(1523, 381), checksums={METABRIC_SHA256}, time_unit="months"),
+                     sizes=(1523, 381), checksums=METABRIC_VERIFIED_SHA256, time_unit="months"),
 }
 
 
@@ -93,7 +96,9 @@ def load_data(dataset="support", path=None, *, smoke=False, seed=123):
     path = Path(path or spec["path"])
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if digest not in spec["checksums"]:
-        raise ValueError(f"{dataset.upper()} CSV checksum differs from the pinned export")
+        raise ValueError(f"{dataset.upper()} CSV checksum differs from the pinned export: "
+                         f"{path} has SHA-256 {digest}; expected one of "
+                         f"{', '.join(sorted(spec['checksums']))}")
     frame = pd.read_csv(path, float_precision="round_trip")
     if set(frame.columns) != set(features + ["split", "row_in_split", "time", "event"]):
         raise ValueError("Unexpected survival-data schema")

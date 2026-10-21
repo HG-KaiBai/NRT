@@ -12,25 +12,25 @@ from . import NRT_ROOT
 from workflow import fingerprint
 
 # Explicit local anchors, independent of upstream Architecture defaults.
-BASELINE = dict(depth=8, shared_width=32, shared_layers=2, private_width=32,
-                private_layers=3, regularization_strength=500., split_min=.05,
+BASELINE = dict(depth=5, shared_width=32, shared_layers=2, private_width=32,
+                private_layers=3, regularization_strength=10., split_min=.01,
                 total_width_floor=8e-4)
 
 
 @dataclass(frozen=True)
 class SearchConfig:
-    trials: int = 500
+    trials: int = 200
     initial_trials: int = 20
     folds: int = 4
     fold_seed: int = 321
     search_seed: int = 871
     search_fit_seed: int = 101
-    depth_min: int = 8
-    depth_max: int = 17
+    depth_min: int = 3
+    depth_max: int = 10
     widths: tuple = (16, 32, 64, 128)
     shared_layers_max: int = 3
     private_layers_max: int = 4
-    strength_max: float = 10000.
+    strength_max: float = 500.
 
 
 def optuna_module():
@@ -64,7 +64,7 @@ def startup(search, baseline, adaptive, seed):
     result = [coordinates(first, adaptive)]
     if adaptive:
         result.append(coordinates(replace(baseline, regularization_strength=0.), True))
-        for strength in (1000., 10000.):
+        for strength in (100., 300.):
             if strength <= search.strength_max:
                 result.append(coordinates(replace(baseline, regularization_strength=strength), True))
     result = list({fingerprint(row): row for row in result}.values())

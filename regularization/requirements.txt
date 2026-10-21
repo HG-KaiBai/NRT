@@ -1,2 +1,2 @@
-# The existing NRT environment already supplies torch, numpy and scipy.
-optuna==4.5.0
+# All NRT workflows use the exact current-server Python environment.
+-r ../requirements.txt

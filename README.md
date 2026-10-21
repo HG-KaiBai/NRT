@@ -15,27 +15,41 @@ in `regularization/tuning/output/` and `regularization/testing/output/`.
 Run commands from this repository's root. The tested cluster interpreter is:
 
 ```bash
-export PY=/home/y679zhao/envs/nrt-runtime/bin/python
+source runtime.sh
 "$PY" -m pip check
 "$PY" -m unittest regularization.test_workflow test_workflow test_deepsurv test_preflight test_cpu_scheduling -v
 bash regularization/tuning/tune_nll.sh --dry-run
 bash regularization/testing/run_nll.sh --dry-run
 ```
 
-See [the current environment snapshot](environment/current/README.md) for exact
-installed package versions and recreation commands. The older files immediately
-under `environment/` describe a different Python 3.14 environment; they are retained
-as historical benchmark provenance. Do not use that snapshot as the current NRT runtime.
+The required environment is the **current Fir server snapshot from 2026-10-21**:
+Python 3.14.2 in `~/envs/pt`, R 4.4.0, and all exact package/build versions in
+[environment/fir-20261021](environment/fir-20261021/README.md). Installers for every
+workflow refer to the same root [requirements.txt](requirements.txt); alternate
+Python versions and silently substituted package builds are not reproduction targets.
+Use [ENVIRONMENT_REPLICATION.md](ENVIRONMENT_REPLICATION.md) for both Alliance and
+ordinary Linux servers, offline artifacts, R restoration, and numerical validation.
+Verify a copied environment with `"$PY" environment/verify.py --check-source` after
+loading the runtime. The files under `environment/current/` are historical Rorqual
+Python 3.11 records; [the 2026-10-20 check](environment/fir-20261020/README.md)
+retains earlier validation and storage estimates.
 
 The [regularization guide](regularization/README.md) defines the model, support,
-search space, seeds, training protocol, and output schema. Defaults are 35 cases,
+search space, seeds, training protocol, and output schema. Defaults are 29 cases,
 5000 observations, 200 trials per searched method, four CV folds, and 500 simulation
 replications. Tuning uses `123 + case.index*10000`; simulation uses
 `123 + 1000000 + case.index*10000 + replication`. Case indices are stable, including
 historical gaps. Every method shares its data and 80/20 split. Testing reads the
 saved tau, model parameters, optimization settings, and fixed refit epochs.
 
-Resume the saved experiment with unchanged options:
+For both `multimodal_separate` and `multimodal_closer`, current status at q=0.2
+and q=0.5 and interval censoring at q=0.5 are excluded: six cases in total.
+Their interval q=0.2, exact, and right-censoring cases remain. All current methods
+use this shared selection; the original seed indices are preserved.
+Use [RERUN_SIMULATIONS.md](RERUN_SIMULATIONS.md) to rerun all simulation methods
+in fresh output directories with the correct job dependencies.
+
+Resume an interrupted 29-case experiment with unchanged source and options:
 
 ```bash
 sbatch regularization/tuning/tune_nll.sh
@@ -68,11 +82,10 @@ Rebuild current summaries without training:
 "$PY" -m regularization.testing.simulation summarize
 ```
 
-Successful results are reused only when fingerprints match. The exact source
-fingerprint compatibility entry in `environment/source-compatibility.json` records
-this cleanup: shared data generation, numerical models, training, and tuning logic
-are unchanged. It preserves existing result fingerprints only for the reviewed
-source snapshot. Any subsequent source change produces a new fingerprint.
+Successful results are reused only when fingerprints match. The compatibility
+entry in `environment/source-compatibility.json` applies only to the historical
+cleanup snapshot. The 29-case revision has a new source fingerprint; use fresh
+output directories for the requested rerun.
 Reproducibility across different hardware or package builds is not guaranteed.
 
 ## Reproduce benchmarks
@@ -81,27 +94,32 @@ Reproducibility across different hardware or package builds is not guaranteed.
 | --- | --- | --- |
 | NNCDE, DeepSurv | exact, right | 15 each |
 | deep_distribution_regression | exact | 5 |
-| ctree, cox, aft | exact, right, current, interval | 35 each |
-| iccforest | right, current, interval | 30 |
+| ctree, cox, aft | exact, right, current, interval | 29 each |
+| iccforest | right, current, interval | 24 |
 
 Neural tuning and testing remain separate from current NRT:
 
 ```bash
-sbatch tuning/tune_nncde.sh
-sbatch tuning/tune_deepsurv.sh
-# After benchmark tuning finishes:
-HYPER_DIR="$PWD/tuning/output/hyper_para" sbatch testing/run_nncde.sh
-HYPER_DIR="$PWD/tuning/output/hyper_para" sbatch testing/run_deepsurv.sh
-# Current NRT manifests supply all 35 shared data cases for CPU methods:
-TUNING_DIR="$PWD/regularization/tuning/output" sbatch testing/run_cpu.sh
+# Prepare all 29 case manifests and tau values, without fitting models:
+bash tuning/prepare_cases.sh
+# Tune each neural method, then run its testing job after that tuning array succeeds:
+nncde_job=$(sbatch --parsable tuning/tune_nncde.sh)
+deepsurv_job=$(sbatch --parsable tuning/tune_deepsurv.sh)
+sbatch --dependency="afterok:${nncde_job%%;*}" testing/run_nncde.sh
+sbatch --dependency="afterok:${deepsurv_job%%;*}" testing/run_deepsurv.sh
+# Other benchmarks need only the prepared cases:
+sbatch testing/run_cpu.sh
 ```
 
 To use retained benchmark CSVs, set `HYPER_DIR="$PWD/testing/hyper_para(old)"`.
 Historical benchmark outputs are summary CSVs; missing raw JSON, model weights,
 or original environment details cannot be reconstructed from those summaries.
 A new fit can rerun the protocol; summary CSVs alone cannot resume individual fits.
-Use the current NRT case manifests only when their n, seed, mu, r, and tau match the
-benchmark protocol. Pass matching `--mu` and `--r` for custom neural experiments.
+Neural testing defaults to `tuning/output/hyper_para`. Set `TUNING_DIR` to use a
+different tuning output root; its `hyper_para/` and `cases/` are selected together.
+Other benchmarks read only tau from `cases/<case_id>.json`; n, seed, mu, and r come
+from simulation arguments. Pass the same custom `--mu` / `--r` during preparation,
+tuning, and simulation so the saved tau matches the generation protocol.
 
 See [benchmark tuning](tuning/README.md), [benchmark testing](testing/README.md),
 and their backend READMEs for package requirements and controls. R methods require
@@ -110,8 +128,25 @@ Rscript and the relevant survival, icenReg, partykit, and ICcforest packages.
 ## Node checks and requeue
 
 Launchers use `runtime.sh`; set `PY` to override the default interpreter and
-`NRT_ROOT` when submitting a relocated project. Device and dependency checks run
-before fits. Exit 75 identifies startup failures; Slurm jobs may requeue up to
-`NRT_MAX_PYTHON_REQUEUES` (default 4). Fitting errors do not trigger that startup retry.
+`NRT_ROOT` when submitting a relocated project. All current realworld,
+regularization, benchmark tuning/testing, preparation, and summary launchers use
+`node_runner.py` through `nrt_python`. Before work begins, it checks temporary
+storage, CPU tensor/BLAS calculations, selected Python/R backends, and the requested
+GPU's allocation, computation, and synchronization. GPU jobs also check the CPU.
+Preparation and summary commands need only CPU checks; previews skip them.
+
+Python/R module-load failures, failed Python import probes, and node precheck
+failures return 75. `runtime.sh` requests `scontrol requeue` for the current job
+or just its failed array element, up to `NRT_MAX_PYTHON_REQUEUES` (default 4), using
+`SLURM_RESTART_COUNT`. Logs append across restarts. Local runs exit without a Slurm
+request, and a rejected requeue request is reported in stderr. Known propagated
+CUDA availability errors during execution also use 75 via `cuda_retry.py`.
+Model/data errors and out-of-memory errors retain their normal failure status.
+
+These launcher changes leave scientific source fingerprints unchanged. Existing
+completed fits remain reusable under their original experiment settings. All
+batch scripts include `--requeue`; placement on a different node is decided by
+Slurm. To use the same checks in a manual command, load `runtime.sh` and run, for
+example, `nrt_python realworld.run preflight --device cpu`.
 Lock files coordinate concurrent writers and may be recreated during a run. Remove
 stale locks only after all writers have stopped. Python bytecode and locks are ignored by Git.

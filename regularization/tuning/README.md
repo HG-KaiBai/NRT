@@ -8,7 +8,7 @@ only adaptive and its fixed-at-adaptive-architecture control, writing to
 the original penalty remains the default for the existing launcher.
 
 From the NRT root, run `python -m regularization.tuning.main` or submit
-`sbatch regularization/tuning/tune_nll.sh`. The default GPU array has 35 tasks,
+`sbatch regularization/tuning/tune_nll.sh`. The default GPU array has 29 tasks (0..28),
 one per case. Each task fits fixed rho, adaptive KL, and the matched architecture
 control. Fixed and adaptive each search 200 candidates: 20 startup and 180 TPE.
 The matched control uses CV only to determine its training epoch count.

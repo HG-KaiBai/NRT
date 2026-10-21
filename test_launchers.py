@@ -17,6 +17,13 @@ LAUNCHERS = (
     ('testing/run_deepsurv.sh', 'testing.simulation', 'DeepSurv', None),
     ('testing/run_cpu.sh', 'testing.simulation',
      'deep_distribution_regression,ctree,iccforest,cox,aft', '1'),
+    ('tuning/prepare_cases.sh', 'tuning.prepare_cases', None, None),
+)
+OTHER_LAUNCHERS = (
+    'realworld/run_cpu.sh', 'realworld/run_gpu.sh', 'realworld/summarize.sh',
+    'realworld/submit_support.sh', 'realworld/submit_metabric.sh',
+    'regularization/tuning/tune_nll.sh', 'regularization/tuning/tune_node_mean_kl.sh',
+    'regularization/testing/run_nll.sh', 'regularization/testing/run_node_mean_kl.sh',
 )
 
 
@@ -59,15 +66,19 @@ class LauncherTests(unittest.TestCase):
             'sys.exit(int(os.environ.get("STUB_SCONTROL_EXIT", "0")))\n'
         )
         scontrol.chmod(0o755)
+        sbatch = self.scratch / 'sbatch'
+        sbatch.write_text('#!/bin/sh\necho "Tests must not submit jobs" >&2\nexit 99\n')
+        sbatch.chmod(0o755)
         # Avoid loading the cluster's R module during the CPU startup check.
         module = self.scratch / 'module'
-        module.write_text('#!/bin/sh\nexit 0\n')
+        module.write_text('#!/bin/sh\nexit "${STUB_MODULE_EXIT:-0}"\n')
         module.chmod(0o755)
         self.env = {
             key: value for key, value in os.environ.items()
             if not key.startswith(('SLURM_', 'NRT_', 'BASH_FUNC_'))
             and key not in ('BASH_ENV', 'ENV', 'DEVICE', 'OUTDIR', 'HYPER_DIR', 'HYPER_FILE', 'SUMMARY_METHODS',
-                            'CASES', 'TUNING_TASK_ID', 'EPOCHS', 'TUNING_EVALS')
+                            'CASES', 'TUNING_TASK_ID', 'EPOCHS', 'TUNING_EVALS',
+                            'TUNING_DIR', 'BASE_SEED', 'N_SAMPLES')
         }
         self.env.update(PY=str(self.python), PATH=f'{self.scratch}:{os.environ["PATH"]}',
                         NRT_PYTHON_CHECK_DELAY_SECONDS='0',
@@ -93,20 +104,25 @@ class LauncherTests(unittest.TestCase):
         for record in records:
             self.assertEqual(record['cwd'], str(root))
             args = record['args']
-            self.assertEqual(args[:3], ['-u', '-m', spec[1]])
+            self.assertEqual(args[:4], ['-u', '-m', 'node_runner', spec[1]])
             is_tuning = spec[1].startswith('tuning.')
             method_flag = '--method' if is_tuning else '--methods'
-            self.assertEqual(args[args.index(method_flag) + 1], spec[2])
+            if spec[2] is not None:
+                self.assertEqual(args[args.index(method_flag) + 1], spec[2])
             if spec[1] == 'tuning.main' and spec[2] == 'DeepSurv':
                 self.assertEqual(args[args.index('--epochs') + 1], '1000')
                 self.assertEqual(args[args.index('--tuning-evals') + 1], '50')
             elif is_tuning:
                 self.assertNotIn('--tuning-evals', args)
+            if is_tuning:
+                self.assertEqual(args[args.index('--seed') + 1], self.env.get('BASE_SEED', '123'))
             stage = 'tuning' if is_tuning else 'testing'
             self.assertEqual(args[args.index('--output-dir') + 1], str(root / stage / 'output'))
             if stage == 'testing':
-                self.assertEqual(args[args.index('--hyper-dir') + 1], str(root / 'testing' / 'hyper_para'))
-                self.assertEqual(args[args.index('--tuning-dir') + 1], str(root / 'tuning' / 'output'))
+                tuning_dir = self.env.get('TUNING_DIR', str(root / 'tuning' / 'output'))
+                hyper_dir = self.env.get('HYPER_DIR', str(Path(tuning_dir) / 'hyper_para'))
+                self.assertEqual(args[args.index('--hyper-dir') + 1], hyper_dir)
+                self.assertEqual(args[args.index('--tuning-dir') + 1], tuning_dir)
                 self.assertEqual(args[args.index('--summary-methods') + 1], 'all')
             self.assertEqual(args[-1], '--dry-run')
         return records
@@ -166,10 +182,25 @@ class LauncherTests(unittest.TestCase):
                     flag = '--task-id' if spec[1].startswith('tuning.') else '--replication'
                     self.assertEqual(args[args.index(flag) + 1], str(task))
 
-    def run_failure(self, **overrides):
+    def test_testing_follows_tuning_directory_with_optional_hyper_override(self):
+        self.env['TUNING_DIR'] = str(self.scratch / 'fresh tuning')
+        for hyper_dir in (None, str(self.scratch / 'explicit hyper_para')):
+            if hyper_dir is not None:
+                self.env['HYPER_DIR'] = hyper_dir
+            for spec in LAUNCHERS[2:5]:
+                with self.subTest(script=spec[0], hyper_dir=hyper_dir):
+                    self.launch(self.copied_script(spec), spec, slurm=True, task_id=spec[3])
+
+    def test_preparation_and_neural_tuning_share_the_requested_seed(self):
+        self.env['BASE_SEED'] = '456'
+        for spec in (LAUNCHERS[0], LAUNCHERS[1], LAUNCHERS[-1]):
+            with self.subTest(script=spec[0]):
+                self.launch(self.copied_script(spec), spec, slurm=True, task_id=spec[3])
+
+    def run_failure(self, script='tuning/tune_nncde.sh', **overrides):
         env = {**self.env, 'SLURM_JOB_ID': '1234', 'SLURM_ARRAY_JOB_ID': '1200',
                'SLURM_ARRAY_TASK_ID': '7', **overrides}
-        return subprocess.run(['bash', str(ROOT / 'tuning/tune_nncde.sh'), '--dry-run'],
+        return subprocess.run(['bash', str(ROOT / script), '--dry-run'],
                               cwd=self.spool, env=env, capture_output=True, text=True, timeout=10)
 
     def requeues(self):
@@ -192,6 +223,20 @@ class LauncherTests(unittest.TestCase):
         result = self.run_failure(STUB_DRIVER_EXIT='1')
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.requeues(), [])
+
+    def test_realworld_cuda_failure_requeues_only_failed_element(self):
+        env = {**self.env, 'SLURM_JOB_ID': '1234', 'SLURM_ARRAY_JOB_ID': '1200',
+               'SLURM_ARRAY_TASK_ID': '1', 'STUB_DRIVER_EXIT': '75'}
+        for status in ('75', '1'):
+            env['STUB_DRIVER_EXIT'] = status
+            result = subprocess.run(['bash', str(ROOT / 'realworld/run_gpu.sh')],
+                                    cwd=self.spool, env=env, capture_output=True,
+                                    text=True, timeout=10)
+            self.assertEqual(result.returncode, int(status), result.stderr)
+            record = json.loads(result.stdout)
+            self.assertEqual(record['args'][:5], ['-u', '-m', 'node_runner', 'realworld.run', 'run'])
+            self.assertEqual(self.requeues(), [['requeue', '1200_1']] if status == '75' else [])
+            (self.scratch / 'requeues.jsonl').unlink(missing_ok=True)
 
     def test_requeue_limit_disabled_requeue_and_rejected_request(self):
         for settings in ({'SLURM_RESTART_COUNT': '4'}, {'NRT_MAX_PYTHON_REQUEUES': '0'}):
@@ -221,11 +266,36 @@ class LauncherTests(unittest.TestCase):
         for args in records:
             self.assertEqual(args[:3], ['--nodes=1', '--ntasks=1', '--cpu-bind=cores'])
         self.assertEqual(records[0][4:6], ['-c', 'import torch, numpy, pandas'])
-        self.assertEqual(records[1][4:7], ['-u', '-m', 'tuning.main'])
+        self.assertEqual(records[1][4:8], ['-u', '-m', 'node_runner', 'tuning.main'])
+
+    def test_every_workflow_requeues_only_failed_element_on_node_precheck_status(self):
+        for script in (*[spec[0] for spec in LAUNCHERS], *OTHER_LAUNCHERS):
+            with self.subTest(script=script):
+                result = self.run_failure(script, STUB_DRIVER_EXIT='75', SLURM_ARRAY_TASK_ID='1')
+                self.assertEqual(result.returncode, 75, result.stderr)
+                self.assertEqual(self.requeues(), [['requeue', '1200_1']])
+                records = [json.loads(line) for line in result.stdout.splitlines()]
+                self.assertEqual(len(records), 1)  # No fitting/submission after the failed check.
+                self.assertEqual(records[0]['args'][:3], ['-u', '-m', 'node_runner'])
+                (self.scratch / 'requeues.jsonl').unlink()
+
+    def test_module_loading_failure_requeues_before_python_starts(self):
+        result = self.run_failure(STUB_MODULE_EXIT='1')
+        self.assertEqual(result.returncode, 75)
+        self.assertEqual(self.requeues(), [['requeue', '1200_7']])
+        self.assertIn('R module load failed', result.stderr)
+        self.assertEqual(result.stdout, '')
+
+    def test_model_failure_does_not_requeue_in_other_workflows(self):
+        for script in OTHER_LAUNCHERS:
+            with self.subTest(script=script):
+                result = self.run_failure(script, STUB_DRIVER_EXIT='1', SLURM_ARRAY_TASK_ID='1')
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(self.requeues(), [])
 
     def test_all_launchers_allow_requeue_and_append_logs(self):
-        for spec in LAUNCHERS:
-            text = (ROOT / spec[0]).read_text()
+        for script in (*[spec[0] for spec in LAUNCHERS], *OTHER_LAUNCHERS):
+            text = (ROOT / script).read_text()
             self.assertIn('#SBATCH --requeue', text)
             self.assertIn('#SBATCH --open-mode=append', text)
 

@@ -22,15 +22,23 @@ class CurrentNRTTests(unittest.TestCase):
         method_action = next(a for a in parser()._actions if a.dest == 'method')
         self.assertEqual(set(method_action.choices), {'NNCDE', 'DeepSurv'})
 
-    def test_exact_cleanup_reuses_saved_source_fingerprint(self):
+    def test_current_source_uses_alias_only_for_exact_match(self):
         mapping = json.loads((workflow.ROOT / 'environment/source-compatibility.json').read_text())
         digest = hashlib.sha256()
         for name in mapping['files']:
             digest.update(name.encode())
             digest.update((workflow.ROOT / name).read_bytes())
-        self.assertIn(digest.hexdigest(), mapping['aliases'])
         current.source_hash.cache_clear()
-        self.assertEqual(current.source_hash(), mapping['aliases'][digest.hexdigest()])
+        raw = digest.hexdigest()
+        self.assertEqual(current.source_hash(), mapping['aliases'].get(raw, raw))
+
+    def test_historical_cleanup_alias_is_still_honored(self):
+        mapping = json.loads((workflow.ROOT / 'environment/source-compatibility.json').read_text())
+        for raw, saved in mapping['aliases'].items():
+            with self.subTest(raw=raw), patch.object(current.hashlib, 'sha256') as digest:
+                digest.return_value.hexdigest.return_value = raw
+                current.source_hash.cache_clear()
+                self.assertEqual(current.source_hash(), saved)
 
     def test_numerical_source_change_does_not_reuse_old_fingerprint(self):
         current.source_hash.cache_clear()

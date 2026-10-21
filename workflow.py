@@ -64,14 +64,19 @@ class Case:
 
     @property
     def index(self):
-        # Keep existing case seeds stable when redundant exact cases are removed.
+        # Keep the original seed indices when cases are excluded from the matrix.
         return (SETTINGS.index(self.setting) * 8
                 + CENSOR_TYPES.index(self.censor_type) * 2
                 + (0 if self.q == 0.2 else 1))
 
 
+EXCLUDED_CASE_IDS = frozenset(
+    f"{setting}_{censor}_q{q:g}"
+    for setting in ("multimodal_separate", "multimodal_closer")
+    for censor, q in (("current", 0.2), ("current", 0.5), ("interval", 0.5)))
 ALL_CASES = tuple(Case(s, c, q) for s in SETTINGS for c in CENSOR_TYPES
-                  for q in ((0.2,) if c == "exact" else (0.2, 0.5)))
+                  for q in ((0.2,) if c == "exact" else (0.2, 0.5))
+                  if Case(s, c, q).id not in EXCLUDED_CASE_IDS)
 
 
 def select_cases(case_ids="all"):

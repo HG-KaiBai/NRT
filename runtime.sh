@@ -8,11 +8,6 @@ export NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-1}
 export PYTHONUNBUFFERED=1
 cd "$NRT_ROOT"
 
-# Use the rebuilt environment on Rorqual unless an interpreter is supplied.
-if [[ -z ${PY:-} ]]; then
-  source /home/y679zhao/envs/nrt-runtime/activate.sh
-fi
-
 # Run probes and fits on the allocated node, using the job's visible devices.
 nrt_step() {
   if [[ -n ${SLURM_JOB_ID:-} ]]; then
@@ -48,7 +43,7 @@ nrt_requeue_current_task() {
   else
     target=$SLURM_JOB_ID
   fi
-  echo "Requeueing Slurm task $target after startup failure: $reason" >&2
+  echo "Requeueing Slurm task $target: $reason" >&2
   if scontrol requeue "$target"; then
     echo "Requeue request accepted for $target; stopping this attempt" >&2
     return 0
@@ -58,7 +53,7 @@ nrt_requeue_current_task() {
 }
 
 nrt_resolve_python() {
-  local interpreter=${PY:-/home/y679zhao/envs/nrt-runtime/bin/python}
+  local interpreter=$PY
   local attempts=${NRT_PYTHON_CHECK_ATTEMPTS:-4}
   local retry_delay=${NRT_PYTHON_CHECK_DELAY_SECONDS:-15}
   local attempt
@@ -80,7 +75,7 @@ nrt_resolve_python() {
   done
   echo "Python is not executable or lacks torch, numpy, or pandas after $attempts attempts: $interpreter" >&2
   nrt_requeue_current_task "Python environment check failed" || true
-  return 1
+  return 75
 }
 
 nrt_run() {
@@ -90,15 +85,39 @@ nrt_run() {
   else
     status=$?
   fi
-  # The Python drivers reserve 75 for node/dependency preflight failures.
+  # Drivers and cuda_retry reserve 75 for node/dependency/availability failures.
   if ((status == 75)); then
-    nrt_requeue_current_task "GPU/CPU node preflight failed" || true
+    nrt_requeue_current_task "GPU/CPU node or CUDA availability check failed" || true
   fi
   return "$status"
 }
 
+# Shared CPU/GPU precheck and CUDA availability handling for every launcher.
+nrt_python() {
+  nrt_run "$PY" -u -m node_runner "$@"
+}
+
+# Define requeue handling before loading modules, so a broken node's module
+# environment can fail with the same retry status as the execution probes.
+if [[ -z ${PY:-} ]]; then
+  if type module >/dev/null 2>&1; then
+    if ! module load "${NRT_PYTHON_MODULE:-python/3.14.2}"; then
+      nrt_requeue_current_task "Python module load failed" || true
+      exit 75
+    fi
+  fi
+  PY="${NRT_VENV:-$HOME/envs/pt}/bin/python3.14"
+fi
+if type module >/dev/null 2>&1; then
+  if ! module load "${R_MODULE:-r/4.4.0}"; then
+    nrt_requeue_current_task "R module load failed" || true
+    exit 75
+  fi
+fi
+export R_LIBS_USER=${R_LIBS_USER:-$HOME/R/x86_64-pc-linux-gnu-library/4.4}
+
 if ! PY=$(nrt_resolve_python); then
-  exit 2
+  exit 75
 fi
 
 nrt_tune() {
@@ -114,9 +133,9 @@ nrt_tune() {
     task_args+=(--tuning-evals "${TUNING_EVALS:-50}")
   fi
   shift
-  nrt_run "$PY" -u -m tuning.main --method "$method" \
+  nrt_python tuning.main --method "$method" \
     --output-dir "${OUTDIR:-$NRT_ROOT/tuning/output}" \
-    --n-samples "${N_SAMPLES:-5000}" --cases "${CASES:-all}" \
+    --n-samples "${N_SAMPLES:-5000}" --seed "${BASE_SEED:-123}" --cases "${CASES:-all}" \
     --device "${DEVICE:-cuda:0}" --threads "${SLURM_CPUS_PER_TASK:-4}" \
     --epochs "${EPOCHS:-$default_epochs}" "${task_args[@]}" "$@"
 }
@@ -125,8 +144,8 @@ nrt_simulate() {
   local methods=$1
   local device=$2
   shift 2
-  nrt_run "$PY" -u -m testing.simulation run --methods "$methods" --device "$device" \
-    --hyper-dir "${HYPER_DIR:-$NRT_ROOT/testing/hyper_para}" \
+  nrt_python testing.simulation run --methods "$methods" --device "$device" \
+    --hyper-dir "${HYPER_DIR:-${TUNING_DIR:-$NRT_ROOT/tuning/output}/hyper_para}" \
     --tuning-dir "${TUNING_DIR:-$NRT_ROOT/tuning/output}" \
     --output-dir "${OUTDIR:-$NRT_ROOT/testing/output}" \
     --n-samples "${N_SAMPLES:-5000}" --cases "${CASES:-all}" \

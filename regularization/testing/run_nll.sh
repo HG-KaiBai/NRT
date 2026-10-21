@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #SBATCH --account=def-anthree
 #SBATCH --job-name=simulate_regularized_nll
-#SBATCH --output=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT/regularization/testing/log/%x-%A_%a.out
-#SBATCH --error=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT/regularization/testing/log/%x-%A_%a.err
+#SBATCH --output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/regularization/testing/log/%x-%A_%a.out
+#SBATCH --error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/regularization/testing/log/%x-%A_%a.err
 #SBATCH --time=1-00:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -15,7 +15,7 @@
 set -euo pipefail
 if [[ -z ${NRT_ROOT:-} ]]; then
   if [[ -n ${SLURM_JOB_ID:-} ]]; then
-    NRT_ROOT=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT
+    NRT_ROOT=/home/y679zhao/projects/def-anthree/y679zhao/NRT
   else
     NRT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
   fi
@@ -31,7 +31,7 @@ if [[ -n ${SLURM_ARRAY_TASK_ID:-${NLL_TASK_ID:-}} ]]; then
   fi
   SELECTED_METHODS=${METHOD_NAMES[$TASK_ID]}
 fi
-nrt_run "$PY" -u -m regularization.testing.simulation run \
+nrt_python regularization.testing.simulation run \
   --methods "$SELECTED_METHODS" --summary-methods "${SUMMARY_METHODS:-all}" \
   --cases "${CASES:-all}" \
   --hyper-dir "${HYPER_DIR:-$NRT_ROOT/regularization/tuning/output/hyper_para}" \

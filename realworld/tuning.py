@@ -36,7 +36,7 @@ def default_config(smoke=False, search_space=None):
                   iccforest=dict(ntree=100, tune_mtry=True, tune_ntree=100, step_factor=1.5))
     if smoke:
         config.update(profile="smoke", folds=2, nncde_epochs=3, nncde_patience=2,
-                      deepsurv_epochs=5, grid_size=32,
+                      deepsurv_epochs=5,
                       nncde_grid=dict(hidden_nodes=[8], learning_rate=[.001], batch_size=[32]),
                       iccforest=dict(ntree=5, tune_mtry=False, tune_ntree=5, step_factor=1.5))
         config["nrt_search"].update(trials=2, initial_trials=2, depth_min=3, depth_max=3,

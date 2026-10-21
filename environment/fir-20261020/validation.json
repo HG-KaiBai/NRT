@@ -1,0 +1,65 @@
+{
+  "support": {
+    "methods": 8,
+    "status": "ok",
+    "profile": "smoke",
+    "device": "cpu"
+  },
+  "metabric": {
+    "methods": 8,
+    "status": "ok",
+    "profile": "smoke",
+    "device": "cpu"
+  },
+  "node_mean_kl": {
+    "status": "ok",
+    "case": "po_interval_q0.2",
+    "samples": 128,
+    "trials": 2,
+    "folds": 2,
+    "epochs": 3,
+    "methods": 2,
+    "replications": 2,
+    "simulation_fits": 4,
+    "summary_written": true
+  },
+  "dependencies": {
+    "python_imports": "passed",
+    "r_packages": "passed",
+    "pip_check": "passed",
+    "packages_installed": []
+  },
+  "slurm_test_only": {
+    "result": "passed",
+    "scripts": [
+      "realworld/submit_support.sh",
+      "realworld/submit_metabric.sh",
+      "realworld/run_gpu.sh",
+      "realworld/run_cpu.sh",
+      "regularization/tuning/tune_node_mean_kl.sh",
+      "regularization/testing/run_node_mean_kl.sh"
+    ]
+  },
+  "gpu": {
+    "status": "not_run",
+    "reason": "srun --immediate=30: requested nodes are busy",
+    "job_id": "66210037",
+    "queued_job_remaining": false
+  },
+  "production_jobs_submitted": false,
+  "regression": {
+    "result": "passed",
+    "tests": 98,
+    "seconds": 53.104,
+    "suites": [
+      "realworld.test_realworld",
+      "regularization.test_workflow",
+      "test_current_nrt",
+      "test_workflow",
+      "test_deepsurv",
+      "test_preflight",
+      "test_cpu_scheduling",
+      "test_launchers"
+    ]
+  }
+}

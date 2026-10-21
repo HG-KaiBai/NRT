@@ -1,6 +1,2 @@
-# Add missing packages to the existing NRT environment. No new environment is required.
-# The existing runtime already supplies torch, numpy>=1.26, pandas and scipy.
-optuna==4.5.0
-lifelines>=0.30,<0.31
-# Compatible with the existing server NumPy 1.26.4 runtime.
-scikit-survival==0.25.0
+# All NRT workflows use the exact current-server Python environment.
+-r ../requirements.txt

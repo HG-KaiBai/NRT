@@ -6,20 +6,32 @@ cox, and aft. Benchmark models and retained result values are preserved.
 
 Run from the NRT root after tuning:
 
+Both CPU and GPU launchers use the shared [node checks and requeue policy](../README.md#node-checks-and-requeue).
+A failed precheck requests requeue of the current job/array element (up to four
+times by default) before simulation fits begin.
+
 ```bash
-HYPER_DIR="$PWD/tuning/output/hyper_para" sbatch testing/run_nncde.sh
-HYPER_DIR="$PWD/tuning/output/hyper_para" sbatch testing/run_deepsurv.sh
-TUNING_DIR="$PWD/regularization/tuning/output" sbatch testing/run_cpu.sh
+sbatch testing/run_nncde.sh
+sbatch testing/run_deepsurv.sh
+sbatch testing/run_cpu.sh
 ```
 
-Neural methods read parameters and tau from `testing/hyper_para/<method>.csv` by
-default. Override with `HYPER_DIR` or `--hyper-dir`; retained CSVs are in
-`testing/hyper_para(old)/`. CPU methods read case manifests from `TUNING_DIR/cases/`
-(default `tuning/output/cases/`). They do not read neural CSVs. Match n, seed, mu,
-r, and tau when choosing manifests. Neural custom generation uses `--mu` and `--r`.
+Neural methods read parameters and tau from `TUNING_DIR/hyper_para/<method>.csv`
+(default `tuning/output/hyper_para/`). Set `TUNING_DIR` / `--tuning-dir` to select
+a different tuning run; `HYPER_DIR` / `--hyper-dir` can override the CSV directory.
+Retained CSVs are in `testing/hyper_para(old)/`.
+
+CPU benchmarks read only tau from `TUNING_DIR/cases/<case_id>.json`, validating the
+case identity and tau. They never read neural CSVs or inherit saved model parameters,
+mu, r, n, or seed. Simulation arguments supply those data settings. First run
+`bash tuning/prepare_cases.sh` to prepare all 29 case records; this does not require
+any neural tuning. For custom generation, pass matching `--mu` / `--r` to
+preparation, neural tuning, and simulation. Defaults are n=5000, base seed=123,
+mu=0, and r=None.
 
 The CPU launcher uses a 500-task array, one replication per task. Each task runs
-110 applicable combinations across workers, then 30 forest cases sequentially.
+92 applicable combinations across workers, then 24 forest cases sequentially
+(116 fits per replication).
 `PARALLEL_FITS` and `ICCFOREST_PARALLEL_FITS` control these pools separately.
 Neural launchers use one GPU each and run replications sequentially.
 
@@ -40,3 +52,6 @@ Match output directory, cases, and replication count to the original run.
 `main.py` accepts the same CLI. NNCDE defaults to 200 epochs, DeepSurv to 1000;
 `--epochs` overrides them. Historical CSV summaries in `output(old)/` retain all
 benchmark values, but cannot replace missing per-fit JSON records for resumption.
+Use [the full rerun procedure](../RERUN_SIMULATIONS.md) for fresh outputs and job
+dependencies. Both multimodal distributions exclude current q=0.2/q=0.5 and
+interval q=0.5; shared case indices retain their original random seeds.

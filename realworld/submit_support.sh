@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 #SBATCH --account=def-anthree
 #SBATCH --job-name=support_submit
-#SBATCH --chdir=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT
-#SBATCH --output=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT/realworld/log/%x-%j.out
-#SBATCH --error=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT/realworld/log/%x-%j.err
+#SBATCH --chdir=/home/y679zhao/projects/def-anthree/y679zhao/NRT
+#SBATCH --output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/realworld/log/%x-%j.out
+#SBATCH --error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/realworld/log/%x-%j.err
 #SBATCH --time=00:15:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=4G
+#SBATCH --requeue
+#SBATCH --open-mode=append
 # Submit with sbatch from any directory, or run with bash on the login node.
 set -euo pipefail
 # Slurm copies batch scripts to its spool; neither BASH_SOURCE nor the
 # submission directory identifies the project reliably inside a batch job.
 if [[ -z ${NRT_ROOT:-} ]]; then
   if [[ -n ${SLURM_JOB_ID:-} ]]; then
-    NRT_ROOT=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT
+    NRT_ROOT=/home/y679zhao/projects/def-anthree/y679zhao/NRT
   else
     NRT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
   fi
@@ -40,8 +42,8 @@ if [[ -n ${NRT_SEARCH_SPACE:-} ]]; then
   export NRT_SEARCH_SPACE
   search_args+=(--nrt-search-space "$NRT_SEARCH_SPACE")
 fi
-nrt_run "$PY" -m realworld.run preflight --device cpu
-nrt_run "$PY" -m realworld.run prepare --dataset "$DATASET" --data "$DATA_CSV" --output-dir "$OUTDIR" "${search_args[@]}"
+nrt_python realworld.run preflight --device cpu
+nrt_python realworld.run prepare --dataset "$DATASET" --data "$DATA_CSV" --output-dir "$OUTDIR" "${search_args[@]}"
 # Explicit paths also support NRT_ROOT overrides; the log directory exists now.
 submit_args=(--parsable --export=ALL --chdir="$NRT_ROOT"
   --output="$NRT_ROOT/realworld/log/%x-%A_%a.out"

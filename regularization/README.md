@@ -27,9 +27,9 @@ The new workflow directly imports `workflow.generate()`, `workflow.horizon()`, a
 
 | Item | Setting shared with the existing workflow |
 | --- | --- |
-| Data cases | 5 settings × 7 observation/q combinations each, for 35 cases in total |
+| Data cases | 3 unimodal settings × 7 combinations + 2 multimodal settings × 4 combinations = 29 cases |
 | Settings | ph, lognormal, po, multimodal_separate, multimodal_closer |
-| Observations | exact; right/current/interval each with q=0.2 and 0.5 |
+| Observations | exact; right q=0.2/0.5; unimodal current/interval q=0.2/0.5; multimodal interval q=0.2 |
 | Exact case ID | Keep `_exact_q0.2`; generate it only once, with q unused in generation |
 | Each dataset | n=5000 and 6 covariates by default |
 | Tuning seed | `base_seed + case.index * 10000`, with base_seed=123 by default |
@@ -42,8 +42,8 @@ The new workflow directly imports `workflow.generate()`, `workflow.horizon()`, a
 
 For example, `ph_right_q0.2` has tuning seed=20123 and simulation replication 1
 seed=1020124. `case.index` retains the indices from the existing implementation
-before redundant exact cases were removed. Do not replace these with consecutive
-indices 0..34 for data generation; array task indices are used only to select cases.
+before case exclusions. Do not replace these with consecutive
+indices 0..28 for data generation; array task indices are used only to select cases.
 
 In the same Python/PyTorch environment, with identical n, base seed, mu, r, tau,
 case, and replication, the two sets of entry points produce identical X, L, R, T,
@@ -51,7 +51,7 @@ generating-distribution parameters, and train/test indices, element by element.
 Different methods also share the same data. Each new result stores a
 `dataset_sha256` covering these eight tensors. Tests call the existing tuning entry
 point directly to capture generated data and use the existing testing `make_job`
-to check simulation seeds and datasets, covering all 35 cases with n=5000.
+to check simulation seeds and datasets, covering all 29 cases with n=5000.
 
 `tuning/output/cases/<case_id>.json` uses the same fields as the original tuning
 workflow, including seed, tau, mu, r, sample counts, and observed right-censoring
@@ -118,7 +118,7 @@ sbatch regularization/testing/run_node_mean_kl.sh
 # sbatch --dependency=afterok:TUNING_JOB_ID regularization/testing/run_node_mean_kl.sh
 ```
 
-The new tuning launcher uses 35 case tasks; testing uses array indices **1..2**
+The new tuning launcher uses 29 case tasks; testing uses array indices **1..2**
 for adaptive and its matched control, with summaries waiting only for those two
 methods. They default to `tuning/output_node_mean_kl` and
 `testing/output_node_mean_kl`, leaving existing outputs in place. `OUTDIR`,
@@ -204,8 +204,8 @@ cases while preserving data generation, the 80/20 split, and CV indices.
 | batch size / gradient clip | 256 / 1.0 |
 | CUDA graphs | Enabled by default; disable with `--no-cuda-graphs` |
 
-The full default tuning run requires `35 * (2*200*4 + 4) = 56140` CV fits and
-105 final fits. Use the JSON supplied through `--search-space` to change the
+The full default tuning run requires `29 * (2*200*4 + 4) = 46516` CV fits and
+87 final fits. Use the JSON supplied through `--search-space` to change the
 `search` and `baseline` fields; the baseline must lie within the search space.
 Use a new output directory after changing model, search, training, or generation
 settings; fingerprint checks reject old caches. The support fix also changes
@@ -232,7 +232,7 @@ directory and rerun the corrected workflow in a new directory.
    finish. For a single-method run, use `--summary-methods` to specify which methods
    the summary waits for.
 
-The default simulation budget is `35 * 3 * 500 = 52500` final fits.
+The default simulation budget is `29 * 3 * 500 = 43500` final fits.
 SSE matches the existing evaluation: a uniform 256-point grid over
 `[0, maximum finite endpoint in the training set]`, with
 `mean_subjects(sum_grid((S_hat-S_true)**2))`. It is neither divided by the number
@@ -242,31 +242,28 @@ only to evaluate SSE.
 
 ## Running the workflow
 
-On 2026-10-11, dependencies and all 9 CPU workflow tests were rechecked successfully
-on Rorqual. Optuna 4.5.0 is installed in the existing `nrt-python311` environment;
-the project `.deps` directory is not required. See the
-[environment check record](ENVIRONMENT_CHECK.md) for full versions, import paths,
-and GPU validation results. The current environment can run this workflow, but its
-versions differ from the Python 3.14.2 / PyTorch 2.11.0 snapshot in `environment/`.
-See the [environment replication guide](../ENVIRONMENT_REPLICATION.md) for exact
-replication requirements.
+The active Fir runtime is Python 3.14.2 / PyTorch 2.11.0 in `~/envs/pt`,
+with Optuna 4.5.0 and R 4.4.0. See the
+[current environment snapshot](../environment/fir-20261021/README.md) for all exact
+package/build versions and [cross-server setup](../ENVIRONMENT_REPLICATION.md).
+The [older check](ENVIRONMENT_CHECK.md) records
+historical Rorqual validation, not the current machine.
 
 Run all commands below from the **NRT root directory**. The launchers load this
 server's existing runtime by default; use the same environment for manual runs.
-The installation command below can also be rerun to install Optuna if needed:
+The existing source environment can be checked without changing installed packages:
 
 ```bash
-cd /home/y679zhao/links/projects/def-anthree/y679zhao/NRT
-source /home/y679zhao/envs/nrt-runtime/activate.sh
-PY=/home/y679zhao/envs/nrt-runtime/bin/python
-"$PY" -m pip install --no-index -r regularization/requirements.txt
+cd /home/y679zhao/projects/def-anthree/y679zhao/NRT
+source runtime.sh
+"$PY" environment/verify.py
 "$PY" -m unittest regularization.test_workflow -v
 ```
 
-`--no-index` uses the Compute Canada wheelhouse configured on this server. On other
-servers, first prepare a base environment containing torch, numpy, scipy, and pandas,
-then install the requirements. If you choose to install into this directory's `.deps`,
-the new entry points still append that path after the main environment.
+`regularization/requirements.txt` includes the complete root environment inventory.
+On another server, recreate the recorded Python/R builds and native dependencies
+before running these checks. Do not substitute a different core environment or add
+an unrecorded `.deps` overlay when reproducing the current results.
 
 Check task configurations without running training:
 
@@ -276,7 +273,7 @@ Check task configurations without running training:
 ```
 
 Submit the full tuning run, then submit testing after all tuning tasks succeed.
-The shared-support fix covers the default CV folds for all 35 cases. Use a new
+The shared-support fix covers the default CV folds for all 29 cases. Use a new
 output directory for new experiments to avoid reusing caches from before the fix.
 You can also tune and simulate a subset independently with `--cases`.
 
@@ -293,11 +290,13 @@ actual tuning array ID):
 sbatch --dependency=afterok:TUNING_JOB_ID regularization/testing/run_nll.sh
 ```
 
-Tuning defaults to array=0..34, with one GPU handling all three methods for one case.
+Tuning defaults to array=0..28, with one GPU handling all three methods for one case.
 Testing defaults to array=0..2, with one GPU handling all cases and replications for
 one method. When changing `CASES`, reduce the tuning array range accordingly; its
 task-id is the index within the selected case list. The launchers reuse the original
-`runtime.sh` environment checks, device preflight, and requeue on startup failure.
+`runtime.sh` and `node_runner.py` checks for CPU computation, temporary storage,
+dependencies, and the selected GPU. Both penalty workflows requeue the failed
+job/array element on precheck exit 75, with at most four requeues by default.
 `PY`, `OUTDIR`, `HYPER_DIR`, `CASES`, `N_SAMPLES`, `BASE_SEED`, and `DEVICE` can
 override defaults. Pass custom generation parameters through tuning's `--mu` / `--r`;
 testing automatically reads the values saved in the CSV.
@@ -385,18 +384,18 @@ existing complete tables if results are missing or failed.
 ## Validation coverage
 
 `regularization/test_workflow.py` checks: element-by-element agreement between the
-original and new tuning data for all 35 cases; element-by-element agreement for
-simulation replications 1 and 7 across all 35 cases; custom mu/r and RNG behavior;
+original and new tuning data for all 29 cases; element-by-element agreement for
+simulation replications 1 and 7 across all 29 cases; custom mu/r and RNG behavior;
 likelihoods for all four observation types; finite support and KL scaling; fixed
 rho; fixed epoch counts; JSON representation of infinite test NLL; shared support
-for all 35 cases / 140 default CV folds; actual hyperparameter selection for all
+for all 29 cases / 116 default CV folds; actual hyperparameter selection for all
 three methods with an isolated extreme value in the training pool; exclusion of
 the outer test set and true event times from support determination; and a real
 small-scale tuning → CSV → simulation → automatic summary workflow, including
 resumption and handling of missing results. This validation is not equivalent to
-the full 35-case × 500-replication GPU experiment.
+the full 29-case × 500-replication GPU experiment.
 
-Recorded local validation: all 9 tests above passed, including real
+Historical local validation before the six case exclusions: all 9 tests above passed, including real
 small-scale CPU training and data-consistency checks at the default sample size
 for all 35 cases. Both Slurm scripts passed `bash -n`. In addition, the three cases
 that previously failed completed 60 CV fits, 9 tuning refits, and 9 simulation fits

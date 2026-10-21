@@ -1,0 +1,2 @@
+"version","platform","blas","lapack","rng"
+"4.4.0","x86_64-pc-linux-gnu","FlexiBLAS AOCL","3.11.0","Mersenne-Twister;Inversion;Rejection"

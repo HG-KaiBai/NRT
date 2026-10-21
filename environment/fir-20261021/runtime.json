@@ -1,0 +1,164 @@
+{
+  "base_prefix": "/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v4/Compiler/gcccore/python/3.14.2",
+  "compiler": "GCC 14.3.0",
+  "cpu": {
+    "flags": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl xtopology nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx_vnni avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd amd_ppin cppc arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq la57 rdpid bus_lock_detect movdiri movdir64b overflow_recov succor smca fsrm avx512_vp2intersect flush_l1d debug_swap amd_lbr_pmc_freeze",
+    "model name": "AMD EPYC 9135 16-Core Processor",
+    "vendor_id": "AuthenticAMD"
+  },
+  "cuda_available": false,
+  "cuda_build": "12.9",
+  "cudnn": 91301,
+  "environment": {
+    "CUBLAS_WORKSPACE_CONFIG": null,
+    "FLEXIBLAS": "aocl",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "MKL_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+    "NVIDIA_TF32_OVERRIDE": null,
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "PYTHONHASHSEED": null,
+    "R_LIBS_USER": "/home/y679zhao/R/x86_64-pc-linux-gnu-library/4.4"
+  },
+  "executable": "/home/y679zhao/envs/pt/bin/python3.14",
+  "gpu_devices": [],
+  "imports": {
+    "PIL": {
+      "path": "/home/y679zhao/envs/pt/lib/python3.14/site-packages/PIL/__init__.py",
+      "version": "12.1.0"
+    },
+    "lifelines": {
+      "path": "/home/y679zhao/envs/pt/lib/python3.14/site-packages/lifelines/__init__.py",
+      "version": "0.30.0"
+    },
+    "matplotlib": {
+      "path": "/home/y679zhao/envs/pt/lib/python3.14/site-packages/matplotlib/__init__.py",
+      "version": "3.10.8"
+    },
+    "numpy": {
+      "path": "/home/y679zhao/envs/pt/lib/python3.14/site-packages/numpy/__init__.py",
+      "version": "2.4.2"
+    },
+    "optuna": {
+      "path": "/home/y679zhao/envs/pt/lib/python3.14/site-packages/optuna/__init__.py",
+      "version": "4.5.0"
+    },
+    "pandas": {
+      "path": "/home/y679zhao/envs/pt/lib/python3.14/site-packages/pandas/__init__.py",
+      "version": "3.0.0"
+    },
+    "scipy": {
+      "path": "/home/y679zhao/envs/pt/lib/python3.14/site-packages/scipy/__init__.py",
+      "version": "1.18.1"
+    },
+    "sklearn": {
+      "path": "/home/y679zhao/envs/pt/lib/python3.14/site-packages/sklearn/__init__.py",
+      "version": "1.9.1"
+    },
+    "sksurv": {
+      "path": "/home/y679zhao/envs/pt/lib/python3.14/site-packages/sksurv/__init__.py",
+      "version": "0.28.0"
+    },
+    "torch": {
+      "path": "/home/y679zhao/envs/pt/lib/python3.14/site-packages/torch/__init__.py",
+      "version": "2.11.0"
+    }
+  },
+  "libc": [
+    "glibc",
+    "2.37"
+  ],
+  "machine": "x86_64",
+  "modules": [
+    "CCconfig",
+    "gentoo/2023",
+    "gcccore/.12.3",
+    "gcc/12.3",
+    "hwloc/2.9.1",
+    "ucx/1.14.1",
+    "libfabric/1.18.0",
+    "pmix/4.2.4",
+    "ucc/1.2.0",
+    "openmpi/4.1.5",
+    "flexiblas/3.3.1",
+    "aocl-blas/5.1",
+    "aocl-lapack/5.1",
+    "StdEnv/2023",
+    "mii/1.1.2",
+    "python/3.14.2",
+    "flexiblascore/.3.3.1",
+    "java/17.0.6",
+    "r/4.4.0"
+  ],
+  "numeric_settings": {
+    "cudnn_allow_tf32": true,
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": false,
+    "default_dtype": "torch.float32",
+    "deterministic_algorithms": false,
+    "interop_threads": 32,
+    "intraop_threads": 1,
+    "matmul_allow_tf32": false,
+    "matmul_precision": "highest"
+  },
+  "numpy_config": "Build Dependencies:\n  blas:\n    detection method: pkgconfig\n    found: true\n    include directory: /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/flexiblascore/3.3.1/include/flexiblas\n    lib directory: /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/flexiblascore/3.3.1/lib64\n    name: flexiblas\n    openblas configuration: unknown\n    pc file directory: /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/flexiblascore/3.3.1/lib/pkgconfig\n    version: 3.3.1\n  lapack:\n    detection method: pkgconfig\n    found: true\n    include directory: /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/flexiblascore/3.3.1/include/flexiblas\n    lib directory: /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/flexiblascore/3.3.1/lib64\n    name: flexiblas\n    openblas configuration: unknown\n    pc file directory: /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/flexiblascore/3.3.1/lib/pkgconfig\n    version: 3.3.1\nCompilers:\n  c:\n    commands: ccache, cc\n    linker: ld.bfd\n    name: gcc\n    version: 12.3.1\n  c++:\n    commands: ccache, c++\n    linker: ld.bfd\n    name: gcc\n    version: 12.3.1\n  cython:\n    commands: cython\n    linker: cython\n    name: cython\n    version: 3.2.4\nMachine Information:\n  build:\n    cpu: x86_64\n    endian: little\n    family: x86_64\n    system: linux\n  host:\n    cpu: x86_64\n    endian: little\n    family: x86_64\n    system: linux\nPython Information:\n  path: /tmp/build_wheels_tmp.62858/build_python-3.14/bin/python\n  version: '3.14'\nSIMD Extensions:\n  baseline:\n  - X86_V2\n  found:\n  - X86_V3\n  - X86_V4\n  - AVX512_ICL\n  not found:\n  - AVX512_SPR\n\n",
+  "nvidia_smi": {
+    "command": [
+      "nvidia-smi",
+      "--query-gpu=name,driver_version,memory.total",
+      "--format=csv,noheader"
+    ],
+    "returncode": 9,
+    "stderr": "",
+    "stdout": "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver. Make sure that the latest NVIDIA driver is installed and running.\n\n"
+  },
+  "os_release": "NAME=\"AlmaLinux\"\nVERSION=\"9.7 (Moss Jungle Cat)\"\nID=\"almalinux\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"9.7\"\nPLATFORM_ID=\"platform:el9\"\nPRETTY_NAME=\"AlmaLinux 9.7 (Moss Jungle Cat)\"\nANSI_COLOR=\"0;34\"\nLOGO=\"fedora-logo-icon\"\nCPE_NAME=\"cpe:/o:almalinux:almalinux:9::baseos\"\nHOME_URL=\"https://almalinux.org/\"\nDOCUMENTATION_URL=\"https://wiki.almalinux.org/\"\nBUG_REPORT_URL=\"https://bugs.almalinux.org/\"\n\nALMALINUX_MANTISBT_PROJECT=\"AlmaLinux-9\"\nALMALINUX_MANTISBT_PROJECT_VERSION=\"9.7\"\nREDHAT_SUPPORT_PRODUCT=\"AlmaLinux\"\nREDHAT_SUPPORT_PRODUCT_VERSION=\"9.7\"\nSUPPORT_END=2032-06-01\n",
+  "platform": "Linux-5.14.0-687.29.1.el9_8.x86_64-x86_64-AMD_EPYC_9135_16-Core_Processor-with-glibc2.37",
+  "prefix": "/home/y679zhao/envs/pt",
+  "python": "3.14.2",
+  "python_build": "3.14.2 (main, Feb 16 2026, 15:15:32) [GCC 14.3.0]",
+  "soabi": "cpython-314-x86_64-linux-gnu",
+  "threadpools": [
+    {
+      "architecture": "zen5",
+      "filepath": "/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/aocl-blascore/5.1/lib/libblis-mt.so.5.1.0",
+      "internal_api": "blis",
+      "num_threads": 1,
+      "prefix": "libblis",
+      "threading_layer": "openmp",
+      "user_api": "blas",
+      "version": "AOCL-BLAS 5.1.0 Build 20250513"
+    },
+    {
+      "available_backends": [
+        "NETLIB",
+        "BLIS",
+        "AOCL",
+        "IMKL",
+        "OPENBLAS"
+      ],
+      "current_backend": "AOCL",
+      "filepath": "/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/flexiblascore/3.3.1/lib64/libflexiblas.so.3.3",
+      "internal_api": "flexiblas",
+      "loaded_backends": [
+        "AOCL"
+      ],
+      "num_threads": 1,
+      "prefix": "libflexiblas",
+      "user_api": "blas",
+      "version": "3.3.1"
+    },
+    {
+      "filepath": "/cvmfs/soft.computecanada.ca/gentoo/2023/x86-64-v3/usr/lib/gcc/x86_64-pc-linux-gnu/14/libgomp.so.1.0.0",
+      "internal_api": "openmp",
+      "num_threads": 1,
+      "prefix": "libgomp",
+      "user_api": "openmp",
+      "version": null
+    }
+  ],
+  "torch_build": "PyTorch built with:\n  - GCC 12.3\n  - C++ Version: 201703\n  - Intel(R) MKL-DNN v3.10.2 (Git Hash f1d471933dc852f956fd05389f9313c7148783d5)\n  - OpenMP 201511 (a.k.a. OpenMP 4.5)\n  - LAPACK is enabled (usually provided by MKL)\n  - NNPACK is enabled\n  - CPU capability usage: AVX512\n  - Build settings: BLAS_INFO=flexi, BUILD_TYPE=Release, COMMIT_SHA=70d99e998b4955e0049d13a98d77ae1b14db1f45, CUDA_VERSION=12.9, CUDNN_VERSION=9.13.1, CXX_COMPILER=/cvmfs/soft.computecanada.ca/gentoo/2023/x86-64-v3/usr/x86_64-pc-linux-gnu/gcc-bin/12/c++, CXX_FLAGS= -fvisibility-inlines-hidden -DUSE_PTHREADPOOL -DNDEBUG -DUSE_KINETO -DLIBKINETO_NOROCTRACER -DLIBKINETO_NOXPUPTI=ON -DUSE_FBGEMM -DUSE_MSLK -DUSE_PYTORCH_QNNPACK -DUSE_XNNPACK -DSYMBOLICATE_MOBILE_DEBUG_HANDLE -O2 -fPIC -DC10_NODEPRECATED -Wall -Wextra -Werror=return-type -Werror=non-virtual-dtor -Werror=range-loop-construct -Werror=bool-operation -Wnarrowing -Wno-missing-field-initializers -Wno-unknown-pragmas -Wno-unused-parameter -Wno-strict-overflow -Wno-strict-aliasing -Wno-stringop-overflow -Wsuggest-override -Wno-psabi -Wno-error=old-style-cast -faligned-new -Wno-maybe-uninitialized -fno-math-errno -fno-trapping-math -Werror=format -Wno-stringop-overflow, LAPACK_INFO=flexi, PERF_WITH_AVX=1, PERF_WITH_AVX2=1, TORCH_VERSION=2.11.0, USE_CUDA=ON, USE_CUDNN=ON, USE_CUSPARSELT=ON, USE_GFLAGS=OFF, USE_GLOG=OFF, USE_GLOO=ON, USE_MKLDNN=ON, USE_MPI=ON, USE_NCCL=ON, USE_NNPACK=ON, USE_OPENMP=ON, USE_ROCM=OFF, USE_ROCM_KERNEL_ASSERT=OFF, USE_XCCL=OFF, USE_XPU=OFF, \n",
+  "torch_git_version": "70d99e998b4955e0049d13a98d77ae1b14db1f45"
+}

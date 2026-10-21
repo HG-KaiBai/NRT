@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #SBATCH --account=def-anthree
-#SBATCH --chdir=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT
+#SBATCH --chdir=/home/y679zhao/projects/def-anthree/y679zhao/NRT
 #SBATCH --job-name=support_cpu
-#SBATCH --output=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT/realworld/log/%x-%A_%a.out
-#SBATCH --error=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT/realworld/log/%x-%A_%a.err
+#SBATCH --output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/realworld/log/%x-%A_%a.out
+#SBATCH --error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/realworld/log/%x-%A_%a.err
 #SBATCH --time=1-00:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -17,7 +17,7 @@ set -euo pipefail
 # submission directory identifies the project reliably inside a batch job.
 if [[ -z ${NRT_ROOT:-} ]]; then
   if [[ -n ${SLURM_JOB_ID:-} ]]; then
-    NRT_ROOT=/home/y679zhao/links/projects/def-anthree/y679zhao/NRT
+    NRT_ROOT=/home/y679zhao/projects/def-anthree/y679zhao/NRT
   else
     NRT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
   fi
@@ -33,7 +33,7 @@ if [[ -n ${NRT_SEARCH_SPACE:-} ]]; then search_args+=(--nrt-search-space "$NRT_S
 groups=(Cox Ctree ICcforest)
 task=${SLURM_ARRAY_TASK_ID:-${TASK_ID:-0}}
 if ! [[ $task =~ ^[0-2]$ ]]; then echo 'TASK_ID must be 0..2' >&2; exit 2; fi
-nrt_run "$PY" -u -m realworld.run run --methods "${groups[$task]}" \
+nrt_python realworld.run run --methods "${groups[$task]}" \
   --dataset "$DATASET" --data "${DATA_CSV:-$NRT_ROOT/realworld/data/$DATASET/${DATASET}_deepsurv.csv}" \
   --output-dir "${OUTDIR:-$NRT_ROOT/realworld/output/$DATASET}" \
   --device cpu --threads "${SLURM_CPUS_PER_TASK:-4}" "${search_args[@]}" "$@"

@@ -13,6 +13,7 @@ import torch
 import workflow as w
 from testing import simulation as sim
 from tuning import main as tune
+from tuning.prepare_cases import prepare
 
 
 class DataWorkflowTests(unittest.TestCase):
@@ -21,8 +22,8 @@ class DataWorkflowTests(unittest.TestCase):
         torch.set_num_threads(1)
 
     def test_case_support_matrix(self):
-        self.assertEqual(len(w.ALL_CASES), 35)
-        self.assertEqual(len({c.id for c in w.ALL_CASES}), 35)
+        self.assertEqual(len(w.ALL_CASES), 29)
+        self.assertEqual(len({c.id for c in w.ALL_CASES}), 29)
         exact_cases = [c for c in w.ALL_CASES if c.censor_type == 'exact']
         self.assertEqual(len(exact_cases), 5)
         self.assertEqual({c.setting for c in exact_cases}, set(w.SETTINGS))
@@ -30,8 +31,22 @@ class DataWorkflowTests(unittest.TestCase):
         self.assertEqual(counts['NNCDE'], 15)
         self.assertEqual(counts['DeepSurv'], 15)
         self.assertEqual(counts['deep_distribution_regression'], 5)
-        self.assertEqual(counts['iccforest'], 30)
-        self.assertEqual(sum(counts[m] for m in w.CPU_METHODS), 140)
+        self.assertEqual(counts['iccforest'], 24)
+        for method in ('ctree', 'cox', 'aft'):
+            self.assertEqual(counts[method], 29)
+        self.assertEqual(sum(counts[m] for m in w.CPU_METHODS), 116)
+
+    def test_excluded_multimodal_cases_and_original_seed_indices(self):
+        excluded = {f'multimodal_{setting}_{censor}_q{q}'
+                    for setting in ('separate', 'closer')
+                    for censor, q in (('current', '0.2'), ('current', '0.5'), ('interval', '0.5'))}
+        self.assertEqual(w.EXCLUDED_CASE_IDS, excluded)
+        for case_id in excluded:
+            with self.subTest(case=case_id), self.assertRaisesRegex(ValueError, 'Unknown cases'):
+                w.select_cases(case_id)
+        self.assertEqual([case.index for case in w.ALL_CASES],
+                         [0, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15,
+                          16, 18, 19, 20, 21, 22, 23, 24, 26, 27, 30, 32, 34, 35, 38])
 
     def test_all_cases_valid_and_identical_across_methods(self):
         for case in w.ALL_CASES:
@@ -181,6 +196,47 @@ class TuningArrayTests(unittest.TestCase):
                 tune.main()
 
 
+class CasePreparationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        torch.set_num_threads(1)
+
+    def test_all_cases_are_available_without_neural_tuning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prepare(root, w.ALL_CASES, n_samples=64)
+            self.assertEqual({p.stem for p in (root / 'cases').glob('*.json')},
+                             {case.id for case in w.ALL_CASES})
+            self.assertFalse((root / 'hyper_para').exists())
+            args = sim.parser().parse_args(['run', '--tuning-dir', str(root)])
+            for case in w.ALL_CASES:
+                saved = json.loads((root / 'cases' / f'{case.id}.json').read_text())
+                self.assertEqual(saved['seed'], 123 + case.index * 10_000)
+                self.assertEqual(saved['n_samples'], 64)
+                self.assertEqual(saved['tau'], w.horizon(case))
+                for method in w.CPU_METHODS:
+                    if case.censor_type in w.SUPPORTED[method]:
+                        self.assertEqual(sim.load_spec(args, method, case)[0]['tau'], saved['tau'])
+            # Neural tuning must accept the exact same case manifest.
+            args = tune.parser().parse_args(['--method', 'DeepSurv', '--output-dir', str(root),
+                                             '--n-samples', '64', '--epochs', '2'])
+            with patch.object(tune, 'fit_model', side_effect=StopIteration), self.assertRaises(StopIteration):
+                tune.tune_case(args, 'DeepSurv', w.ALL_CASES[0], None)
+
+    def test_preparation_reuses_identical_manifests_and_rejects_changed_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cases = w.select_cases('ph_right_q0.2')
+            prepare(root, cases, n_samples=64)
+            path = root / 'cases' / f'{cases[0].id}.json'
+            before = path.read_bytes(), path.stat().st_mtime_ns
+            prepare(root, cases, n_samples=64)
+            self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), before)
+            with self.assertRaisesRegex(ValueError, 'different data settings'):
+                prepare(root, cases, n_samples=64, seed=321)
+            self.assertEqual(path.read_bytes(), before[0])
+
+
 class SimulationHyperparameterTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -195,7 +251,9 @@ class SimulationHyperparameterTests(unittest.TestCase):
         w.write_csv(self.root / f'{method}.csv', [row] * rows)
 
     def test_csvs_cover_all_neural_fits_without_tuning_manifests(self):
-        self.assertEqual(sim.parser().parse_args(['run']).hyper_dir, w.ROOT / 'testing' / 'hyper_para')
+        defaults = sim.parser().parse_args(['run'])
+        self.assertEqual(sim.hyperparameter_paths(defaults)['NNCDE'],
+                         w.ROOT / 'tuning' / 'output' / 'hyper_para' / 'NNCDE.csv')
         args = sim.parser().parse_args(['run', '--hyper-dir', str(self.root),
                                       '--tuning-dir', str(self.root / 'missing')])
         for method in ('NNCDE', 'DeepSurv'):
@@ -212,6 +270,12 @@ class SimulationHyperparameterTests(unittest.TestCase):
                 expected_tau = None if case.censor_type == 'exact' else 5.0
                 self.assertEqual(manifest['tau'], expected_tau)
                 self.assertEqual(training['epochs'], w.DEFAULT_EPOCHS[method])
+
+    def test_neural_defaults_follow_the_selected_tuning_output(self):
+        args = sim.parser().parse_args(['run', '--tuning-dir', str(self.root)])
+        self.assertEqual(sim.hyperparameter_paths(args)['DeepSurv'], self.root / 'hyper_para' / 'DeepSurv.csv')
+        args = sim.parser().parse_args(['run', '--tuning-dir', str(self.root), '--hyper-dir', str(self.root / 'custom')])
+        self.assertEqual(sim.hyperparameter_paths(args)['NNCDE'], self.root / 'custom' / 'NNCDE.csv')
 
     def test_csv_specs_work_without_tuning_manifests_and_track_parameter_changes(self):
         self.save_csv('NNCDE')
@@ -316,12 +380,30 @@ class SimulationCPUManifestTests(unittest.TestCase):
                         continue
                     with self.subTest(method=method, case=case.id):
                         spec = sim.load_spec(self.args, method, case)
-                        self.assertEqual(spec[0], expected)
+                        self.assertEqual(spec[0], {**expected, 'mu': self.args.mu, 'r': self.args.r})
                         job = sim.make_job(self.args, method, case, 1, spec)
-                        for key in ('tau', 'mu', 'r'):
-                            self.assertEqual(job['request'][key], expected[key])
+                        self.assertEqual(job['request']['tau'], expected['tau'])
+                        self.assertEqual(job['request']['mu'], self.args.mu)
+                        self.assertEqual(job['request']['r'], self.args.r)
                         count += 1
-        self.assertEqual(count, 140)
+        self.assertEqual(count, 116)
+
+    def test_cpu_uses_only_tau_from_saved_case_and_generator_options_from_cli(self):
+        case = w.Case('ph', 'right', 0.2)
+        self.args.mu, self.args.r = .3, .6
+        self.save_manifest(case, parameters={'hidden_nodes': 999}, seed=999)
+        first = sim.make_job(self.args, 'cox', case, 1, sim.load_spec(self.args, 'cox', case))
+        self.save_manifest(case, mu=-99, r=99, parameters={'hidden_nodes': 1}, seed=1)
+        second = sim.make_job(self.args, 'cox', case, 1, sim.load_spec(self.args, 'cox', case))
+        self.assertEqual(first['request_hash'], second['request_hash'])
+        self.assertEqual(first['request']['parameters'], {})
+        self.assertEqual((first['request']['mu'], first['request']['r']), (.3, .6))
+        path = self.root / 'cases' / f'{case.id}.json'
+        saved = json.loads(path.read_text())
+        for key in ('mu', 'r', 'parameters', 'seed'):
+            saved.pop(key)
+        w.atomic_json(path, saved)
+        self.assertEqual(sim.load_spec(self.args, 'cox', case)[0]['tau'], 7.25)
 
     def test_missing_manifest_reports_the_case_path(self):
         case = w.Case('ph', 'right', 0.2)

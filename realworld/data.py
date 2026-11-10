@@ -1,18 +1,6 @@
-"""Read pinned SUPPORT/METABRIC CSVs; never use split metadata as features.
-
-Exact export of the author-distributed HDF5 from jaredleekatzman/DeepSurv,
-commit f0803f57bff9395f2bfbb99da2f1031adcf01331,
-experiments/data/support/support_train_test.h5. DOI: 10.1186/s12874-018-0482-1.
-8,873 rows, 14 anonymous x columns, original 7,098/1,775 split; time is in days,
-event=1 means observed death. No imputation, filtering, relabeling or scaling
-was applied to the SUPPORT CSV. Feature order is the original HDF5 matrix order.
-METABRIC uses the supplied 1523/381 split and nine features; its raw follow-up
-is in months. Its checksum pins the supplied file, not an independently verified
-HDF5 export. Preserve the test row censored at time zero.
-"""
+"""Dataset definitions, common 80/20 splits, and training-only preprocessing."""
 from dataclasses import dataclass
 import hashlib
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -20,113 +8,72 @@ import torch
 
 from . import ROOT
 
-DEFAULT_DATA = ROOT / "data/support/support_deepsurv.csv"
-FEATURES = [f"x{i:02d}" for i in range(14)]
-SUPPORT_SHA256 = "76916ee819f1e7610d1c4376ead3ef238877058607f5ca291fb3e6a1ba9bf734"
-# The current CSV serialization was also verified against every x/t/e value
-# and source row in the original HDF5 at the commit documented above. Accept
-# only these two verified byte representations; do not bypass the checksum.
-SUPPORT_VERIFIED_SHA256 = frozenset({
-    SUPPORT_SHA256,
-    "aac5a35ec6de18a1b39bb584f5e1aa22a7c6e3348a1115d8867229ca8a0b31e8",
-})
-
 
 @dataclass
-class SurvivalData:
+class RealData:
+    name: str
+    target: str
+    censor_type: str
     frame: pd.DataFrame
-    x: torch.Tensor
-    time: torch.Tensor
-    event: torch.Tensor
+    time: np.ndarray
+    event: np.ndarray
     train: torch.Tensor
     test: torch.Tensor
-    sha256: str
-    name: str = "support"
-    time_unit: str = "days"
-
-    @property
-    def features(self):
-        return [f"x{i:02d}" for i in range(self.x.shape[1])]
-
-    def bounds(self, indices, scaler=None):
-        x = self.x[indices]
-        if scaler is not None:
-            x = (x - scaler[0]) / scaler[1]
-        left = self.time[indices]
-        right = torch.where(self.event[indices], left, torch.inf)
-        return x, left, right
+    row_ids: np.ndarray
+    source_sha256: str
 
     def scaler(self, indices):
-        x = self.x[indices]
-        return x.mean(0), x.std(0, correction=0).clamp_min(1e-6)
+        values = self.frame.iloc[np.asarray(indices)].to_numpy(dtype=float)
+        return dict(columns=list(self.frame), mean=values.mean(0).tolist(),
+                    scale=np.maximum(values.std(0), 1e-6).tolist())
 
-    def outcomes(self, indices):
-        from sksurv.util import Surv
-        return Surv.from_arrays(self.event[indices].numpy(), self.time[indices].numpy())
-
-    def metadata(self):
-        return [dict(split=name, n=len(ix), events=int(self.event[ix].sum()),
-                     censored=int((~self.event[ix]).sum()),
-                     censoring_rate=float((~self.event[ix]).double().mean()),
-                     min_time=float(self.time[ix].min()), max_time=float(self.time[ix].max()),
-                     time_unit=self.time_unit)
-                for name, ix in (("train", self.train), ("test", self.test))]
-
-
-METABRIC_DATA = ROOT / "data/metabric/metabric_deepsurv.csv"
-METABRIC_SHA256 = "ba502e364efab52916d4316e97d6020e924545bef0f88802f4d77f973cf0eeb1"
-# The time-sorted CSV matches every original field exactly when keyed by
-# (split, row_in_split); restoring source order reproduces METABRIC_SHA256.
-# Keep the supplied row order and accept only these verified representations.
-METABRIC_VERIFIED_SHA256 = frozenset({
-    METABRIC_SHA256,
-    "d57d0ae0415b41f3c6c727ae46ab13b8677e6cd9177de503a2ea95d61f7fb3ac",
-})
-DATASETS = {
-    "support": dict(path=DEFAULT_DATA, features=FEATURES, sizes=(7098, 1775),
-                    checksums=SUPPORT_VERIFIED_SHA256, time_unit="days"),
-    "metabric": dict(path=METABRIC_DATA, features=[f"x{i:02d}" for i in range(9)],
-                     sizes=(1523, 381), checksums=METABRIC_VERIFIED_SHA256, time_unit="months"),
-}
+    def bounds(self, indices, scaler=None):
+        ix = np.asarray(indices)
+        x = self.frame.iloc[ix].to_numpy(dtype=float)
+        if scaler is not None:
+            x = (x - np.asarray(scaler['mean'])) / np.asarray(scaler['scale'])
+        t = self.time[ix]
+        return (torch.tensor(x, dtype=torch.float32),
+                torch.tensor(t, dtype=torch.float32),
+                torch.tensor(np.where(self.event[ix], t, np.inf), dtype=torch.float32))
 
 
-def load_data(dataset="support", path=None, *, smoke=False, seed=123):
-    spec = DATASETS[dataset]
-    features = spec["features"]
-    path = Path(path or spec["path"])
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    if digest not in spec["checksums"]:
-        raise ValueError(f"{dataset.upper()} CSV checksum differs from the pinned export: "
-                         f"{path} has SHA-256 {digest}; expected one of "
-                         f"{', '.join(sorted(spec['checksums']))}")
-    frame = pd.read_csv(path, float_precision="round_trip")
-    if set(frame.columns) != set(features + ["split", "row_in_split", "time", "event"]):
-        raise ValueError("Unexpected survival-data schema")
-    if frame.duplicated(["split", "row_in_split"]).any():
-        raise ValueError("Duplicate source row identifiers")
-    numeric = frame[features + ["time", "event"]].to_numpy()
-    if not np.isfinite(numeric).all() or (frame.time < 0).any() or not frame.event.isin([0, 1]).all():
-        raise ValueError("Invalid/missing covariates or survival outcomes")
-    train = torch.tensor(np.flatnonzero(frame.split == "train"))
-    test = torch.tensor(np.flatnonzero(frame.split == "test"))
-    if (len(train), len(test)) != spec["sizes"] or len(train) + len(test) != len(frame):
-        raise ValueError(f"Expected the original {spec['sizes']} train/test partition")
-    if smoke:
-        generator = torch.Generator().manual_seed(seed)
-        train = train[torch.randperm(len(train), generator=generator)[:160]]
-        test = test[torch.randperm(len(test), generator=generator)[:80]]
-    return SurvivalData(frame, torch.tensor(frame[features].to_numpy(), dtype=torch.float32),
-                       torch.tensor(frame.time.to_numpy(), dtype=torch.float64),
-                       torch.tensor(frame.event.to_numpy(), dtype=torch.bool), train, test, digest, dataset, spec["time_unit"])
-
-
-# Keep the existing SUPPORT Python entry points available.
-SupportData = SurvivalData
-
-
-def load_support(path=DEFAULT_DATA, *, smoke=False, seed=123):
-    return load_data("support", path, smoke=smoke, seed=seed)
-
-
-def load_metabric(path=METABRIC_DATA, *, smoke=False, seed=123):
-    return load_data("metabric", path, smoke=smoke, seed=seed)
+def load_dataset(name, *, gt_target='CO', seed=123, limit=None):
+    source = 'rotterdam' if name in ('rotterdam', 'rotterdam_recur', 'rotterdam_death') else name
+    path = ROOT / 'data' / f'{source}.csv'
+    raw = pd.read_csv(path)
+    row_ids = np.arange(len(raw))
+    if name == 'gt_2011':
+        if gt_target not in ('NOX', 'CO', 'TEY'):
+            raise ValueError('gt target must be NOX, CO or TEY')
+        target, censor = gt_target, 'exact'
+        time = raw[gt_target].to_numpy(float)
+        event = np.ones(len(raw), dtype=bool)
+        frame = raw.drop(columns=gt_target)
+    elif source == 'rotterdam':
+        target, time_column = ('death', 'dtime') if name == 'rotterdam_death' else ('recur', 'rtime')
+        censor = 'right'
+        time = raw[time_column].to_numpy(float)
+        event = raw[target].to_numpy()
+        if not np.isin(event, [0, 1]).all():
+            raise ValueError('Event must be binary')
+        event = event.astype(bool)
+        # Explicit schema, independent of test-set category frequencies.
+        frame = raw.drop(columns=['pid', 'rtime', 'recur', 'dtime', 'death', 'size'])
+        if not raw['size'].isin(['<=20', '20-50', '>50']).all():
+            raise ValueError('Unknown tumour-size category')
+        frame['size_20_50'] = (raw['size'] == '20-50').astype(float)
+        frame['size_gt50'] = (raw['size'] == '>50').astype(float)
+    else:
+        raise ValueError(f'Unknown dataset: {name}')
+    if (not np.isfinite(frame.to_numpy(float)).all() or
+            not np.isfinite(time).all() or not (time > 0).all()):
+        raise ValueError('This protocol requires finite covariates and positive outcomes')
+    if limit is not None:
+        # Smoke subset only; full runs always retain every row.
+        ix = np.random.default_rng(seed).permutation(len(raw))[:limit]
+        frame, time, event, row_ids = frame.iloc[ix].reset_index(drop=True), time[ix], event[ix], row_ids[ix]
+    order = torch.randperm(len(frame), generator=torch.Generator().manual_seed(seed + 1))
+    split = int(.8 * len(frame))
+    return RealData(name, target, censor, frame, time, event, order[:split], order[split:],
+                    row_ids, hashlib.sha256(path.read_bytes()).hexdigest())

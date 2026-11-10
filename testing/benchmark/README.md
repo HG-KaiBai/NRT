@@ -1,16 +1,16 @@
 # Conditional-distribution benchmarks
 
-This directory contains one implementation folder per paper method.
-`benchmark_methods.ipynb` generates shared data with
-`pycode.neural_only.testdata2`, uses the first 80% for fitting, and reports
-the same metric as `model_mlp.ipynb`:
+This directory contains the model backends used by the retained benchmark
+workflow. See [the stage guide](../README.md) and
+[the full rerun procedure](../../RERUN_SIMULATIONS.md) for the reference protocol.
+Shared data generation and evaluation are defined by root `workflow.py`.
 
 ```python
 average_grid_sse = (estimated_survival - true_survival).square().sum(dim=1).mean()
 ```
 
-The default grid is the same 256-point grid from zero to `1.1` times the
-largest finite training bound. This is a pointwise sum, not an integral.
+The simulation grid has 256 points from zero to the largest finite training
+bound. This score is a pointwise sum, not an integral.
 
 ## Supported observations
 
@@ -33,19 +33,17 @@ the complete interval representation, including its exact-event special case.
 
 ## Run
 
-Using the `PolyaPFN` environment, open
-`pycode/neural_only/benchmark_methods.ipynb`. Match `SCENARIO`, `N_SAMPLES`,
-`SEED`, `GRID_SIZE`, `CENSOR_TYPE`, `CENSOR_Q`, and `MULTIMODAL_CASE` with
-`model_mlp.ipynb` to compare methods on identical data. The notebook exposes
-the fitted models and result tables for inspection. Standalone runners and
-their legacy data generator have been removed.
+Use the pinned Python 3.14.2 / R 4.4.0 environment from
+[environment/fir-20261021](../../environment/fir-20261021/README.md).
+Run the current tuning and simulation CLIs described in the stage guide;
+the historical benchmark notebook was removed during cleanup.
 
 The `lognormal` scenario uses a lognormal event-time distribution with
 covariate-dependent median and log-scale standard deviation 0.5. The
 `multimodal` scenario uses a two-component Weibull mixture with equal weights
 and shapes `(5, 8)`. Its reference survival curve marginalizes over both
 components; the sampled component is latent and is never supplied to a
-fitted method. See `../testdata2.md` for all four generating scenarios.
+fitted method. See `../../tuning/testdata2.md` for all four generating scenarios.
 
 ICcforest deliberately calls the official R package rather than substituting
 a Python random-survival-forest algorithm. It requires R with `ICcforest`,
@@ -57,7 +55,7 @@ The ctree benchmark directly calls `partykit::ctree` with the interval
 log-rank response transformation from Fu and Simonoff. It uses the `partykit`
 defaults `mincriterion=0.95`, `minsplit=20`, `minbucket=7`, and unlimited tree
 depth. Turnbull NPMLE survival curves are fitted separately in the terminal
-nodes. These controls can be overridden in the notebook's model constructor.
+nodes. These controls are exposed by the model constructor.
 
 NNCDE follows the paper/reference code: two 64-unit ReLU hidden layers,
 piecewise full-likelihood hazard estimation, Adam, early stopping after ten
@@ -85,7 +83,7 @@ and log-logistic models use
 exact, right-, interval-, and current-status data in one representation. The
 multimodal scenarios are intentionally fitted with one Weibull AFT model; the
 benchmark does not estimate a Weibull mixture. R with `survival` is required.
-In `benchmark_methods.ipynb`, the new PH simulation uses exponential AFT
+The PH simulation uses exponential AFT
 (minimum extreme-value log-time errors with scale one), lognormal uses normal
 log-time errors, PO uses logistic log-time errors (`dist="loglogistic"`), and
 multimodal uses a single Weibull working model. The AFT predictor remains
@@ -105,10 +103,10 @@ parameters are listed in `deepsurv/README.md` and written to result JSON. It is
 available for exact and right-censored data and is not extended to interval or
 current-status data. A standard Breslow Cox baseline turns learned relative
 risks into survival curves for the shared `average_grid_sse` evaluation. The
-notebook uses `MULTIMODAL_CASE="separate"` or `"closer"` for the two scale cases.
+workflow retains the `multimodal_separate` and `multimodal_closer` cases.
 
-Setting `DEEPSURV_CUDA_TUNE=True` executes every Sobol cross-validation fit on the selected
-PyTorch device and then refits the selected configuration on all training rows.
+`tuning.main --method DeepSurv` executes the Sobol cross-validation fits on
+the selected PyTorch device and refits the selected configuration on the training pool.
 
 ## Sources
 

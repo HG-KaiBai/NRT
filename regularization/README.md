@@ -12,9 +12,8 @@ retains the three comparison methods from the original code.
 | `adaptive_nll_cv` | Learn rho, KL strength a≥0 | Search architectures and a independently |
 | `fixed_at_adaptive_architecture` | Fixed rho=0.5, a=0 | Use the architecture selected by adaptive, with a separate CV run to determine its own training epochs |
 
-`unified_nll/`, `kl_single_case/`, and existing results are retained. The new entry
-points do not depend on the `pycode`, `finite_support_kl`, or `neural_only` packages
-missing from those older entry points. The network architecture is reused from
+`unified_nll/` retains the shared model, tree, training, and metric dependencies.
+Standalone legacy experiments and `kl_single_case/` have been removed. The network architecture is reused from
 `unified_nll/tuning_model.py`; the training loop is copied from
 `unified_nll/nll_cv_train.py` and connected to the local finite-support model on the
 original time scale.
@@ -76,70 +75,6 @@ Geometry and leaf widths use float64; the network and log mass use float32.
 The minimum leaf width is `U * 0.0008/K`; rho=`0.1+0.8*sigmoid(raw)`.
 All CV folds, candidates, and methods for a case share the same U, which is also
 used for the final fit.
-
-### Alternative: equal weight per internal node
-
-Select `--penalty node_mean_kl` for adaptive tuning. The original `partition_kl`
-remains the default. Write `r_v(x)` for the effective left-child width divided by
-its parent width, **after** reserving minimum leaf widths. For depth D:
-
-```text
-c_v(x) = 2 * KL(Bernoulli(1/2) || Bernoulli(r_v(x)))
-       = -log(4 * r_v(x) * (1-r_v(x)))
-partition_kl: R(x) = (1/D) * sum_{l=0}^{D-1} [sum_{v at level l} c_v(x) / 2**l]
-node_mean_kl: R(x) = sum_{all internal v} c_v(x) / (2**D - 1)
-lambda_n = a/sqrt(n_fit), unchanged
-objective = mean(observed-data NLL) + lambda_n * mean_subjects(R(x))
-```
-
-Both retain the factor of two cancelling the KL's 1/2. Only the averaging
-changes: levels have equal weight in the original penalty; nodes have equal
-weight in the alternative. Both depend only on widths, vanish for equal
-partitions, and agree at depth one. The implementation reconstructs internal
-widths from the actual leaf widths, so it includes the minimum-width constraint
-and is invariant to the time scale U.
-
-Only `adaptive_nll_cv` needs a new search. Its
-`fixed_at_adaptive_architecture` control reuses the newly selected architecture,
-keeps rho=0.5 and a=0, and runs its own CV to select epochs. The independent
-`fixed_nll_cv` method is omitted by the launchers below. Data generation,
-unregularized validation NLL, the a search space, optimization, and SSE evaluation
-are unchanged. The penalty choice is saved in requests, fold diagnostics,
-results, and hyperparameter CSVs; testing restores it from the CSV. Switching
-penalties in the same tuning or simulation output directory is rejected.
-
-From the NRT root, run this two-method experiment with:
-
-```bash
-sbatch regularization/tuning/tune_node_mean_kl.sh
-# After all tuning tasks succeed:
-sbatch regularization/testing/run_node_mean_kl.sh
-# Alternatively, schedule testing after the tuning array succeeds:
-# sbatch --dependency=afterok:TUNING_JOB_ID regularization/testing/run_node_mean_kl.sh
-```
-
-The new tuning launcher uses 29 case tasks; testing uses array indices **1..2**
-for adaptive and its matched control, with summaries waiting only for those two
-methods. They default to `tuning/output_node_mean_kl` and
-`testing/output_node_mean_kl`, leaving existing outputs in place. `OUTDIR`,
-`HYPER_DIR`, `CASES`, and other runtime overrides work as before. If limiting
-`CASES`, also limit the tuning array to the selected case indices.
-
-The equivalent Python entry points are:
-
-```bash
-python -m regularization.tuning.main \
-  --methods adaptive_nll_cv,fixed_at_adaptive_architecture --penalty node_mean_kl \
-  --output-dir regularization/tuning/output_node_mean_kl
-python -m regularization.testing.simulation run \
-  --methods adaptive_nll_cv,fixed_at_adaptive_architecture \
-  --hyper-dir regularization/tuning/output_node_mean_kl/hyper_para \
-  --output-dir regularization/testing/output_node_mean_kl
-```
-
-Use fresh output directories: source fingerprint checks still reject CSVs and
-caches from older code. Existing fixed-method results need no rerun for this
-two-method experiment.
 
 This protocol fixes the support using the outer training pool: observed endpoints
 from the inner validation folds contribute to U, but U is not adjusted by candidate
@@ -246,8 +181,6 @@ The active Fir runtime is Python 3.14.2 / PyTorch 2.11.0 in `~/envs/pt`,
 with Optuna 4.5.0 and R 4.4.0. See the
 [current environment snapshot](../environment/fir-20261021/README.md) for all exact
 package/build versions and [cross-server setup](../ENVIRONMENT_REPLICATION.md).
-The [older check](ENVIRONMENT_CHECK.md) records
-historical Rorqual validation, not the current machine.
 
 Run all commands below from the **NRT root directory**. The launchers load this
 server's existing runtime by default; use the same environment for manual runs.
@@ -257,7 +190,7 @@ The existing source environment can be checked without changing installed packag
 cd /home/y679zhao/projects/def-anthree/y679zhao/NRT
 source runtime.sh
 "$PY" environment/verify.py
-"$PY" -m unittest regularization.test_workflow -v
+"$PY" -m unittest test_preflight test_node_runner -v
 ```
 
 `regularization/requirements.txt` includes the complete root environment inventory.
@@ -381,25 +314,10 @@ SQLite and per-fold caches, while testing reuses successful JSON results. Use a
 new output directory when changing the protocol. Automatic summarization preserves
 existing complete tables if results are missing or failed.
 
-## Validation coverage
+## Preflight and small validation runs
 
-`regularization/test_workflow.py` checks: element-by-element agreement between the
-original and new tuning data for all 29 cases; element-by-element agreement for
-simulation replications 1 and 7 across all 29 cases; custom mu/r and RNG behavior;
-likelihoods for all four observation types; finite support and KL scaling; fixed
-rho; fixed epoch counts; JSON representation of infinite test NLL; shared support
-for all 29 cases / 116 default CV folds; actual hyperparameter selection for all
-three methods with an isolated extreme value in the training pool; exclusion of
-the outer test set and true event times from support determination; and a real
-small-scale tuning → CSV → simulation → automatic summary workflow, including
-resumption and handling of missing results. This validation is not equivalent to
-the full 29-case × 500-replication GPU experiment.
-
-Historical local validation before the six case exclusions: all 9 tests above passed, including real
-small-scale CPU training and data-consistency checks at the default sample size
-for all 35 cases. Both Slurm scripts passed `bash -n`. In addition, the three cases
-that previously failed completed 60 CV fits, 9 tuning refits, and 9 simulation fits
-using the default n=5000 and 4 folds, with a small architecture, 2 trials, and
-3 epochs. All succeeded, and the hyperparameter CSV files and three case summary
-tables were generated correctly. Those historical validation checks did not include a full tuning or
-500-replication run; current outputs are retained separately.
+CPU/GPU startup checks are implemented by root `node_runner.py`, with regression
+checks in `test_preflight.py` and `test_node_runner.py`. Other test suites and
+standalone validation scripts were removed during cleanup. The small tuning and
+simulation commands above can verify the full pipeline in fresh directories.
+They do not reproduce the full 29-case, 500-replication experiment.

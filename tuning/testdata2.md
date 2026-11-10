@@ -95,7 +95,7 @@ $$S(t\mid X_i)=\tfrac12 S_1(t\mid X_i)+\tfrac12 S_2(t\mid X_i).$$
 
 The distinct shapes and case-specific scales give two conditional density modes.
 After marginalizing over Z, the mixture's hazard ratios vary with time; it
-violates PH, rather than merely changing a PH baseline hazard. Both notebook
+violates PH, rather than merely changing a PH baseline hazard. The shared workflow
 survival and density plots use the distinct shapes. Censoring does not depend
 on the sampled component.
 
@@ -140,11 +140,11 @@ The fraction of infinite upper bounds is approximately q for all three
 censored schemes; additional current-status and interval observations have
 finite nonzero-width bounds.
 
-## Usage and notebook integration
+## Generator usage
 
 ```python
 import torch
-from pycode.neural_only.testdata2 import (
+from tuning.testdata2 import (
     data_reg, data_reg_multimodal, survival_curves, multimodal_survival,
 )
 
@@ -162,18 +162,13 @@ x, L, R, T, weights, scales, component = data_reg_multimodal(
 truth = multimodal_survival(weights, scales, grid)
 ```
 
-`model_mlp.ipynb` and `benchmark_methods.ipynb` import `testdata2.py` and
-share seed=123, n=5000, q=0.2, scenario="multimodal", multimodal_case="separate", censor_type="right",
-CPU data generation, and an 80/20 split. Change the same settings in both
-notebooks to compare methods on identical data. Choose any of the four
-scenarios and four observation schemes; for the multimodal scenario, set
-`MULTIMODAL_CASE` to `"separate"` or `"closer"` in both notebooks. Set q to 0.2
-or 0.5 for the requested censoring regimes. Benchmark results record the selected
-multimodal case and scales.
+The production workflow calls this generator through root `workflow.py`, using
+shared case definitions, deterministic seeds, and an independent random 80/20
+split. The retained 29-case selection and simulation seed formula are documented
+in [the main workflow](../README.md). Evaluation uses `survival_curves` for
+PH/lognormal/PO and `multimodal_survival` for mixtures.
 
-The notebooks use `survival_curves` for PH/lognormal/PO and
-`multimodal_survival` for the mixture, so their SSE calculations use the
-correct conditional truth. Parametric AFT uses the matching log-time error
+Parametric AFT uses the matching log-time error
 family for each single-distribution simulation:
 
 | Scenario | AFT event-time family | Error in log(T) |
@@ -189,5 +184,5 @@ Multimodal is deliberately fitted with one Weibull,
 rather than a mixture. The AFT covariate predictor remains linear in X1-X6;
 the error-family match does not add the generator's nonlinear squared terms.
 
-Both active notebooks use this generator. Legacy generators, standalone
-runners, and separate test and paper-reproduction scripts have been removed.
+Historical notebooks have been removed; use the production workflow for the
+reference protocol.

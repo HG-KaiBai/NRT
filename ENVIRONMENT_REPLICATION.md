@@ -7,9 +7,9 @@ Keep exact package versions and `+computecanada` build suffixes. Alternate Pytho
 versions, newer packages, and public PyPI replacements are different environments.
 No installed package was changed during this update.
 
-The top-level `environment/` inventory, `environment/current/` (Rorqual), and
-`environment/fir-20261020/` are historical records. Root [requirements.txt](requirements.txt)
-and all four workflow requirements files now include the same current inventory.
+Root [requirements.txt](requirements.txt) and the workflow requirements files
+include the same `environment/fir-20261021/` inventory. Unrelated earlier
+environment inventories were removed during the 2026-11-10 cleanup.
 
 ## Exact baseline
 
@@ -43,14 +43,15 @@ differ; binary compatibility and effective library versions still need to match.
 ## Preserve source, data, and installers
 
 Copy the **working tree**, including uncommitted source edits, not just Git HEAD.
-The active source manifest includes the 29-case simulation revision; the earlier
-manifest is retained as `SOURCE_SHA256SUMS.before-29-cases`. Python/R package pins
-are unchanged. Use [RERUN_SIMULATIONS.md](RERUN_SIMULATIONS.md) for the new full run.
-It also includes the shared CPU/GPU launcher prechecks; the preceding source
-manifest is retained as `SOURCE_SHA256SUMS.before-node-precheck`.
-`SOURCE_SHA256SUMS` records the captured Python/R/shell code; `DATA_SHA256SUMS`
-records the exact CSV bytes. METABRIC is in original row order, SHA-256
-`ba502e364efab52916d4316e97d6020e924545bef0f88802f4d77f973cf0eeb1`.
+The active source manifest records the cleaned working tree, including the
+29-case simulation, shared CPU/GPU prechecks, and NRT directory locking.
+Python/R package pins are unchanged. Use [RERUN_SIMULATIONS.md](RERUN_SIMULATIONS.md)
+for a fresh full run. Historical source manifests inside
+`nrt-29cases-20261021_105101/` remain untouched.
+`SOURCE_SHA256SUMS` records Python/R/shell code, requirements, and the realworld
+search configuration; `DATA_SHA256SUMS` records the exact GT 2011 and Rotterdam
+CSV bytes. Both checksum lists were refreshed on 2026-11-10 to match the retained
+files; this is not a new capture of the installed package environment.
 Also preserve external search-space files, selected hyperparameters, requests,
 split assignments, seeds, and completed reference outputs.
 
@@ -163,8 +164,7 @@ source runtime.sh
 (cd environment/fir-20261021 && sha256sum -c SHA256SUMS)
 "$PY" environment/verify.py --check-source
 "$PY" -m realworld.run preflight --device cpu
-"$PY" -m unittest realworld.test_realworld regularization.test_workflow
-"$PY" reproduce.py smoke --output-dir /tmp/nrt-reproduction-new
+"$PY" -m unittest test_preflight test_node_runner
 ```
 
 `verify.py` exits nonzero for missing/extra packages, changed exact distribution
@@ -197,7 +197,7 @@ This performs a small CUDA calculation; a model smoke run is still needed. A
 login-node capture does not establish GPU execution. Current launchers request
 H100 MIG devices. Slurm account/GPU resource names, absolute `--chdir` and log
 paths, and excluded node names are site-specific: update or override them on the
-destination, including child scripts submitted by `realworld/submit_support.sh`.
+destination, including the jobs submitted by `realworld/submit.py`.
 Create log directories before submission. Slurm reads `#SBATCH` headers before
 shell variables expand. Setup validation does not require production jobs.
 

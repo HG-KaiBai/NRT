@@ -1,60 +1,9 @@
-"""Real-world baselines and a memory-bounded adapter for the existing NNCDE."""
+"""Simulation adapters: memory-bounded NNCDE and DeepSurv with Breslow ties."""
 import copy
-
 import numpy as np
-import pandas as pd
 import torch
-
 from testing.benchmark.deepsurv.cuda_model import DeepSurvCUDA
 from testing.benchmark.nncde.model import NNCDE, _FittedNetwork, _LogHazardNetwork
-
-
-def support_parameters():
-    """User-specified SUPPORT preset; no external configuration file.
-
-    ``hidden_layers_sizes`` and ``L2_reg`` map to the adapter's ``hidden_layers``
-    and ``l2_reg``. The input width (``n_in=14``) is inferred from SUPPORT data.
-    The existing 800-epoch, full-batch Adam training settings are retained.
-    """
-    return dict(hidden_layers=(33, 33, 33), learning_rate=0.03279227024343838,
-                lr_decay=0.000645986328125, momentum=0.9450444335937499,
-                l2_reg=3.54434228515625, l1_reg=0., activation="selu",
-                dropout=0.1982763671875, batch_norm=False, standardize=True,
-                optimizer="adam", epochs=800, tune=False)
-
-
-def metabric_parameters():
-    """User-specified METABRIC preset; n_in=9 is inferred from the data."""
-    return dict(hidden_layers=(42, 42, 42), learning_rate=0.0020065103592061526,
-                dropout=0.034404296875000004, lr_decay=0.00055220703125,
-                momentum=0.8109013671875, l2_reg=4.6593974609375,
-                batch_norm=False, standardize=True, activation="selu",
-                l1_reg=0., optimizer="adam", epochs=800, tune=False)
-
-
-def deepsurv_parameters(dataset):
-    return {"support": support_parameters, "metabric": metabric_parameters}[dataset]()
-
-
-# Upstream parameter configuration license (retained with the embedded preset):
-# MIT License
-# Copyright (c) 2016, Jared Katzman
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
 
 def breslow_loss(logits, observed, event):
     """Stable, order-invariant Cox partial likelihood for tied SUPPORT times."""
@@ -66,8 +15,8 @@ def breslow_loss(logits, observed, event):
     return -(death * (risk - denominators)).sum() / death.sum()
 
 
-class SupportDeepSurv(DeepSurvCUDA):
-    """Dataset presets, paper inverse-time LR decay and Breslow ties.
+class RealDeepSurv(DeepSurvCUDA):
+    """Simulation architecture and constant Adam learning rate with Breslow ties.
 
     Reuses the existing Lasagne-compatible architecture, initialization and
     output-weight L2 convention. Momentum is recorded from the preset but Adam
@@ -81,7 +30,7 @@ class SupportDeepSurv(DeepSurvCUDA):
         self.training_history_ = []
         for epoch in range(epochs):
             model.train()
-            lr = configuration.learning_rate / (1 + epoch * configuration.lr_decay)
+            lr = configuration.learning_rate
             for group in optimizer.param_groups:
                 group["lr"] = lr
             optimizer.zero_grad(set_to_none=True)
@@ -95,33 +44,6 @@ class SupportDeepSurv(DeepSurvCUDA):
         model.eval()
         return model, mean, std
 
-
-class PaperCox:
-    """Unpenalized lifelines CoxPHFitter, as in the authors' cph_run.py."""
-    def fit(self, x, left, right, **_):
-        from lifelines import CoxPHFitter
-        self.columns = [f"x{i}" for i in range(x.shape[1])]
-        frame = pd.DataFrame(x.numpy(), columns=self.columns)
-        frame["time"] = left.numpy()
-        frame["event"] = torch.isfinite(right).numpy()
-        self.model = CoxPHFitter(penalizer=0., baseline_estimation_method="breslow")
-        self.model.fit(frame, duration_col="time", event_col="event")
-        return self
-
-    def predict_survival(self, x, times):
-        frame = pd.DataFrame(x.numpy(), columns=self.columns)
-        # Right-continuous step evaluation of the fitted Breslow baseline;
-        # avoid lifelines' linear interpolation between event-time jumps.
-        baseline = self.model.baseline_cumulative_hazard_
-        positions = np.searchsorted(baseline.index.to_numpy(), times.numpy(), side="right") - 1
-        cumulative = np.zeros(len(times))
-        keep = positions >= 0
-        cumulative[keep] = baseline.iloc[positions[keep], 0].to_numpy()
-        hazards = self.model.predict_partial_hazard(frame).to_numpy()
-        return torch.tensor(np.exp(-hazards[:, None] * cumulative))
-
-    def predict_risk(self, x):
-        return torch.tensor(self.model.predict_log_partial_hazard(pd.DataFrame(x.numpy(), columns=self.columns)).to_numpy())
 
 
 class MemoryBoundNNCDE(NNCDE):

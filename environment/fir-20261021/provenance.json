@@ -1,7 +1,7 @@
 {
   "captured_at": "2026-10-21T12:07:06.254446-04:00",
   "git_head": "475d473a2f6e0616011cf64290b5c61396f5e271",
-  "git_status": " M .gitignore\n M ENVIRONMENT_REPLICATION.md\n M README.md\n M environment/current/README.md\n M environment/current/SHA256SUMS\n M realworld/README.md\n M realworld/data.py\n M realworld/metrics.py\n M realworld/nrt_search.py\n D realworld/output/metabric_20261019_011058/Cox/brier_curve.csv\n D realworld/output/metabric_20261019_011058/Cox/coefficients.csv\n D realworld/output/metabric_20261019_011058/Ctree/brier_curve.csv\n D realworld/output/metabric_20261019_011058/DeepSurv/brier_curve.csv\n D realworld/output/metabric_20261019_011058/ICcforest/brier_curve.csv\n D realworld/output/metabric_20261019_011058/NNCDE/brier_curve.csv\n D realworld/output/metabric_20261019_011058/NNCDE/cv_results.csv\n D realworld/output/metabric_20261019_011058/adaptive_nll_cv/brier_curve.csv\n D realworld/output/metabric_20261019_011058/adaptive_nll_cv/cv_results.csv\n D realworld/output/metabric_20261019_011058/brier_curves.csv\n D realworld/output/metabric_20261019_011058/comparison.csv\n D realworld/output/metabric_20261019_011058/dataset_summary.csv\n D realworld/output/metabric_20261019_011058/fixed_at_adaptive_architecture/brier_curve.csv\n D realworld/output/metabric_20261019_011058/fixed_nll_cv/brier_curve.csv\n D realworld/output/metabric_20261019_011058/fixed_nll_cv/cv_results.csv\n D realworld/output/metabric_20261019_011058/selected_parameters.csv\n D realworld/output/metabric_20261019_011058/status.csv\n D realworld/output/support_20261019_011058/Cox/brier_curve.csv\n D realworld/output/support_20261019_011058/Cox/coefficients.csv\n D realworld/output/support_20261019_011058/Ctree/brier_curve.csv\n D realworld/output/support_20261019_011058/DeepSurv/brier_curve.csv\n D realworld/output/support_20261019_011058/ICcforest/brier_curve.csv\n D realworld/output/support_20261019_011058/NNCDE/brier_curve.csv\n D realworld/output/support_20261019_011058/NNCDE/cv_results.csv\n D realworld/output/support_20261019_011058/adaptive_nll_cv/brier_curve.csv\n D realworld/output/support_20261019_011058/adaptive_nll_cv/cv_results.csv\n D realworld/output/support_20261019_011058/brier_curves.csv\n D realworld/output/support_20261019_011058/comparison.csv\n D realworld/output/support_20261019_011058/dataset_summary.csv\n D realworld/output/support_20261019_011058/fixed_at_adaptive_architecture/brier_curve.csv\n D realworld/output/support_20261019_011058/fixed_nll_cv/brier_curve.csv\n D realworld/output/support_20261019_011058/fixed_nll_cv/cv_results.csv\n D realworld/output/support_20261019_011058/selected_parameters.csv\n D realworld/output/support_20261019_011058/status.csv\n D realworld/output/support_20261019_112357/.tmp/tmp9uzoj38c/_remote_module_non_scriptable.py\n D realworld/output/support_20261019_112357/.tmp/tmptjhx0wne/_remote_module_non_scriptable.py\n D realworld/output/support_20261019_112357/Cox/baseline_cumulative_hazard.csv\n D realworld/output/support_20261019_112357/Cox/brier_curve.csv\n D realworld/output/support_20261019_112357/Cox/coefficients.csv\n D realworld/output/support_20261019_112357/Cox/predictions.npz\n D realworld/output/support_20261019_112357/Ctree/brier_curve.csv\n D realworld/output/support_20261019_112357/Ctree/model.rds\n D realworld/output/support_20261019_112357/Ctree/predictions.npz\n D realworld/output/support_20261019_112357/DeepSurv/brier_curve.csv\n D realworld/output/support_20261019_112357/DeepSurv/model.pt\n D realworld/output/support_20261019_112357/DeepSurv/predictions.npz\n D realworld/output/support_20261019_112357/ICcforest/brier_curve.csv\n D realworld/output/support_20261019_112357/ICcforest/model.rds\n D realworld/output/support_20261019_112357/ICcforest/predictions.npz\n D realworld/output/support_20261019_112357/NNCDE/brier_curve.csv\n D realworld/output/support_20261019_112357/NNCDE/cv_results.csv\n D realworld/output/support_20261019_112357/NNCDE/model.pt\n D realworld/output/support_20261019_112357/NNCDE/predictions.npz\n D realworld/output/support_20261019_112357/adaptive_nll_cv/study.sqlite3\n D realworld/output/support_20261019_112357/dataset_summary.csv\n D realworld/output/support_20261019_112357/fixed_nll_cv/study.sqlite3\n D realworld/output/support_20261019_112357/split_assignments.csv\n M realworld/requirements.txt\n M realworld/run.py\n M realworld/run_cpu.sh\n M realworld/run_gpu.sh\n M realworld/submit_metabric.sh\n M realworld/submit_support.sh\n M realworld/summarize.sh\n M realworld/test_realworld.py\n M realworld/tuning.py\n M regularization/ENVIRONMENT_CHECK.md\n M regularization/README.md\n M regularization/testing/run_nll.sh\n M regularization/testing/run_node_mean_kl.sh\n M regularization/tuning/tune_nll.sh\n M regularization/tuning/tune_node_mean_kl.sh\n M runtime.sh\n M test_current_nrt.py\n M test_launchers.py\n M testing/run_cpu.sh\n M testing/run_deepsurv.sh\n M testing/run_nncde.sh\n M tuning/tune_deepsurv.sh\n M tuning/tune_nncde.sh\n?? cuda_retry.py\n?? environment/capture.R\n?? environment/capture.py\n?? environment/fir-20261020/\n?? environment/fir-20261021/\n?? environment/verify.py\n?? realworld/log/\n?? realworld/output/support/\n?? regularization/testing/output_node_mean_kl/\n?? regularization/tuning/output_node_mean_kl/\n?? test_cuda_retry.py\n",
+  "git_status": " M .gitignore\n M ENVIRONMENT_REPLICATION.md\n M README.md\n M environment/current/README.md\n M environment/current/SHA256SUMS\n M realworld/README.md\n M realworld/data.py\n M realworld/metrics.py\n M realworld/nrt_search.py\n D realworld/output/metabric_20261019_011058/Cox/brier_curve.csv\n D realworld/output/metabric_20261019_011058/Cox/coefficients.csv\n D realworld/output/metabric_20261019_011058/Ctree/brier_curve.csv\n D realworld/output/metabric_20261019_011058/DeepSurv/brier_curve.csv\n D realworld/output/metabric_20261019_011058/ICcforest/brier_curve.csv\n D realworld/output/metabric_20261019_011058/NNCDE/brier_curve.csv\n D realworld/output/metabric_20261019_011058/NNCDE/cv_results.csv\n D realworld/output/metabric_20261019_011058/adaptive_nll_cv/brier_curve.csv\n D realworld/output/metabric_20261019_011058/adaptive_nll_cv/cv_results.csv\n D realworld/output/metabric_20261019_011058/brier_curves.csv\n D realworld/output/metabric_20261019_011058/comparison.csv\n D realworld/output/metabric_20261019_011058/dataset_summary.csv\n D realworld/output/metabric_20261019_011058/fixed_at_adaptive_architecture/brier_curve.csv\n D realworld/output/metabric_20261019_011058/fixed_nll_cv/brier_curve.csv\n D realworld/output/metabric_20261019_011058/fixed_nll_cv/cv_results.csv\n D realworld/output/metabric_20261019_011058/selected_parameters.csv\n D realworld/output/metabric_20261019_011058/status.csv\n D realworld/output/support_20261019_011058/Cox/brier_curve.csv\n D realworld/output/support_20261019_011058/Cox/coefficients.csv\n D realworld/output/support_20261019_011058/Ctree/brier_curve.csv\n D realworld/output/support_20261019_011058/DeepSurv/brier_curve.csv\n D realworld/output/support_20261019_011058/ICcforest/brier_curve.csv\n D realworld/output/support_20261019_011058/NNCDE/brier_curve.csv\n D realworld/output/support_20261019_011058/NNCDE/cv_results.csv\n D realworld/output/support_20261019_011058/adaptive_nll_cv/brier_curve.csv\n D realworld/output/support_20261019_011058/adaptive_nll_cv/cv_results.csv\n D realworld/output/support_20261019_011058/brier_curves.csv\n D realworld/output/support_20261019_011058/comparison.csv\n D realworld/output/support_20261019_011058/dataset_summary.csv\n D realworld/output/support_20261019_011058/fixed_at_adaptive_architecture/brier_curve.csv\n D realworld/output/support_20261019_011058/fixed_nll_cv/brier_curve.csv\n D realworld/output/support_20261019_011058/fixed_nll_cv/cv_results.csv\n D realworld/output/support_20261019_011058/selected_parameters.csv\n D realworld/output/support_20261019_011058/status.csv\n D realworld/output/support_20261019_112357/.tmp/tmp9uzoj38c/_remote_module_non_scriptable.py\n D realworld/output/support_20261019_112357/.tmp/tmptjhx0wne/_remote_module_non_scriptable.py\n D realworld/output/support_20261019_112357/Cox/baseline_cumulative_hazard.csv\n D realworld/output/support_20261019_112357/Cox/brier_curve.csv\n D realworld/output/support_20261019_112357/Cox/coefficients.csv\n D realworld/output/support_20261019_112357/Cox/predictions.npz\n D realworld/output/support_20261019_112357/Ctree/brier_curve.csv\n D realworld/output/support_20261019_112357/Ctree/model.rds\n D realworld/output/support_20261019_112357/Ctree/predictions.npz\n D realworld/output/support_20261019_112357/DeepSurv/brier_curve.csv\n D realworld/output/support_20261019_112357/DeepSurv/model.pt\n D realworld/output/support_20261019_112357/DeepSurv/predictions.npz\n D realworld/output/support_20261019_112357/ICcforest/brier_curve.csv\n D realworld/output/support_20261019_112357/ICcforest/model.rds\n D realworld/output/support_20261019_112357/ICcforest/predictions.npz\n D realworld/output/support_20261019_112357/NNCDE/brier_curve.csv\n D realworld/output/support_20261019_112357/NNCDE/cv_results.csv\n D realworld/output/support_20261019_112357/NNCDE/model.pt\n D realworld/output/support_20261019_112357/NNCDE/predictions.npz\n D realworld/output/support_20261019_112357/adaptive_nll_cv/study.sqlite3\n D realworld/output/support_20261019_112357/dataset_summary.csv\n D realworld/output/support_20261019_112357/fixed_nll_cv/study.sqlite3\n D realworld/output/support_20261019_112357/split_assignments.csv\n M realworld/requirements.txt\n M realworld/run.py\n M realworld/run_cpu.sh\n M realworld/run_gpu.sh\n M realworld/submit_metabric.sh\n M realworld/submit_support.sh\n M realworld/summarize.sh\n M realworld/test_realworld.py\n M realworld/tuning.py\n M regularization/ENVIRONMENT_CHECK.md\n M regularization/README.md\n M regularization/testing/run_nll.sh\n M regularization/tuning/tune_nll.sh\n M runtime.sh\n M test_current_nrt.py\n M test_launchers.py\n M testing/run_cpu.sh\n M testing/run_deepsurv.sh\n M testing/run_nncde.sh\n M tuning/tune_deepsurv.sh\n M tuning/tune_nncde.sh\n?? cuda_retry.py\n?? environment/capture.R\n?? environment/capture.py\n?? environment/fir-20261020/\n?? environment/fir-20261021/\n?? environment/verify.py\n?? realworld/log/\n?? realworld/output/support/\n?? test_cuda_retry.py\n",
   "host": "login2",
   "node_precheck_revision": {
     "environment_versions_changed": false,
@@ -22,6 +22,20 @@
     ]
   },
   "note": "SOURCE_SHA256SUMS includes working-tree edits; Git HEAD alone is insufficient.",
+  "simulation_directory_lock_revision": {
+    "environment_versions_changed": false,
+    "files_changed": [
+      "regularization/test_workflow.py",
+      "regularization/testing/simulation.py"
+    ],
+    "note": "Use flock on existing method/case and output directories. No per-replication or summary lock files. Applied before NRT simulations started.",
+    "numerical_model_or_data_code_changed": false,
+    "previous_source_manifest": "SOURCE_SHA256SUMS.before-directory-locks",
+    "simulation_source_fingerprint_changed": true,
+    "source_manifest_sha256": "e72c12bb6aca3bc8a4f342c13dc23e55fef288b426fb91a784824ca877bff495",
+    "tuning_source_fingerprint_changed": false,
+    "updated_at": "2026-10-21T19:11:06.412719+00:00"
+  },
   "simulation_revision": {
     "case_count": 29,
     "environment_versions_changed": false,
@@ -39,5 +53,41 @@
     "production_jobs_submitted": false,
     "source_manifest_sha256": "069c983cfb47b7ca216cf039cae50a77f6f449d082ecb3fc7cdddd7b6801d5c0",
     "updated_at": "2026-10-21T16:48:27.360670+00:00"
+  },
+  "reproduction_cleanup_20261110": {
+    "scope": [
+      "nrt-29cases-20261021_105101",
+      "realworld"
+    ],
+    "note": "Removed unrelated experiments, old results, notebooks, dependency caches, unused benchmark copies/runners, non-preflight tests, and old runtime logs. Result data, model weights, predictions, and optimization records are preserved. No backup archive is retained.",
+    "retained_preflight_tests": [
+      "test_preflight.py",
+      "test_node_runner.py"
+    ],
+    "removed_file_count": 6443,
+    "removed_bytes": 170978826,
+    "package_runtime_inventory_changed": false,
+    "retained_scientific_source_changed": false,
+    "source_data_manifests": "Refreshed for the cleaned working tree and GT 2011 / Rotterdam data; historical manifests inside the simulation result directory are unchanged.",
+    "validation_before_final_pruning": {
+      "tests_run": 102,
+      "passed": true,
+      "full_gpu_experiment_run": false
+    },
+    "final_validation": {
+      "preflight_tests_run": 16,
+      "passed": true,
+      "python_modules_parsed": 63,
+      "shell_scripts_checked": 10,
+      "production_entrypoints_and_required_backends_imported": true,
+      "saved_nrt_parameter_rows_with_matching_source_fingerprint": 87,
+      "nrt_source_fingerprint": "472a947a26741811461575763d2ce8dd1f0a7296dc6183b8b56f845fc8594edb",
+      "simulation_directory_entries_unchanged": 222373,
+      "realworld_removed_test_cache_log_entries": 62,
+      "retained_reference_checksums_verified": 91,
+      "source_data_tools_snapshot_checksums_passed": true,
+      "full_gpu_experiment_run": false,
+      "installed_environment_revalidated": false
+    }
   }
 }

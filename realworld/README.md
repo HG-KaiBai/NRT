@@ -1,331 +1,362 @@
-# Real-world survival analysis: SUPPORT and METABRIC
+# Real-data analysis: CO, Rotterdam recurrence and death
 
-This directory compares eight survival models on SUPPORT (14 covariates) and METABRIC (9 covariates), preserving each bundled CSV’s train/test split. Select the experiment with `--dataset support` or `--dataset metabric`. Final evaluation reports three main metrics: traditional Harrell C-index, Uno IPCW C-index, and integrated IPCW Brier score (IBS); test NLL is intentionally not added.
+Real-data adapters, data, logs, model artifacts, tuning caches, predictions and
+comparison tables are contained in this directory. The reference experiment is
+`../nrt-29cases-20261021_105101`. Models, search samplers and benchmark backends are
+imported directly from `../regularization/`, `../tuning/` and `../testing/`.
+There is no local copy of simulation source. Run commands from the NRT project
+root so these shared modules are importable. Each new run records hashes of both
+the real-data code and shared Python/R code in `request.json`, relative to NRT.
+The package inventory is referenced directly from `../environment/fir-20261021/`;
+`../runtime.sh` loads the shared Python/R runtime.
 
+## Outcomes and methods
 
-## 1. Data used
+| Analysis | Response | Covariates | Evaluation |
+| --- | --- | --- | --- |
+| `gt_2011` | CO, uncensored | All other 10 columns | Harrell C-index; ordinary Brier curve and IBS |
+| `rotterdam_recur` | rtime/recur | Baseline variables; exclude pid and all outcome columns | Uno IPCW C-index; Yang IPCW Brier curve and IBS |
+| `rotterdam_death` | dtime/death | Same baseline variables and patient split as recurrence | Uno IPCW C-index; Yang IPCW Brier curve and IBS |
 
-The input is [`data/support/support_deepsurv.csv`](data/support/support_deepsurv.csv). According to the provenance in [`data.py`](data.py), it is an exact CSV export of `experiments/data/support/support_train_test.h5` from `jaredleekatzman/DeepSurv`, commit `f0803f57bff9395f2bfbb99da2f1031adcf01331`. The recorded paper DOI is `10.1186/s12874-018-0482-1`.
+Rotterdam tumour size is dummy coded with `<=20` as reference and indicators for
+`20-50` and `>50`; `year` is retained. Event indicators are used exactly as supplied.
+The recurrence analysis uses the supplied right-censoring indicator; it is not a
+competing-risk cumulative-incidence analysis or a combined disease-free endpoint.
+Death is a separate all-cause mortality endpoint using `dtime/death`. Both Rotterdam
+analyses exclude `pid`, `rtime`, `recur`, `dtime` and `death` from predictors, and
+share the same patient split. Each endpoint has its own training-observation tau.
 
-| Partition | Observations | Observed deaths | Right-censored | Censoring rate | Follow-up range (days) |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Training | 7,098 | 4,823 | 2,275 | 32.05% | 3–2,029 |
-| Test | 1,775 | 1,213 | 562 | 31.66% | 3–2,029 |
-| Total | 8,873 | 6,036 | 2,837 | 31.97% | 3–2,029 |
+Each analysis has 9 methods: three NRT variants plus six benchmarks. The common
+benchmarks are NNCDE, DeepSurv, ctree, Cox and Weibull AFT. GT adds Deep Distribution
+Regression (DDR); both Rotterdam endpoints add ICcforest. No generating family is
+known for real data, so AFT uses the declared Weibull working model, without
+selecting its distribution from the test set.
 
-The original train/test partition is preserved. The CSV has 18 columns:
+The NRT variants are `fixed_nll_cv`, `adaptive_nll_cv`, and
+`fixed_at_adaptive_architecture`, using partition KL. The matched control uses
+the adaptive architecture and its own CV epoch selection.
 
-| Columns | Meaning and use |
-| --- | --- |
-| `x00`–`x13` | Fourteen input covariates in the original HDF5 matrix order. The export does not provide clinical variable names; a verified mapping is needed before interpreting individual features clinically. |
-| `time` | Observed event or censoring time, in days. |
-| `event` | `1` for observed death; `0` for right censoring. |
-| `split` | Original `train` or `test` membership; excluded from model inputs. |
-| `row_in_split` | Source row identifier within the partition; excluded from model inputs. |
+## Training protocol
 
-The export applies no additional imputation, filtering, relabeling, or scaling. All bundled numeric values are finite and present. The loader checks schema, positive times, binary event indicators, unique source row identifiers, partition sizes, and an allowlist of two verified SHA-256 checksums. The original recorded export checksum is:
+One reproducible 80/20 split uses the simulation's CPU torch permutation with
+seed `123+1`. All methods within each analysis share the same split.
+Hyperparameters are selected entirely within the 80% pool. This
+is one held-out real-data analysis per endpoint, not 500 independently generated
+simulation datasets. No simulation tuning result is reused as a real-data optimum.
 
-```text
-76916ee819f1e7610d1c4376ead3ef238877058607f5ca291fb3e6a1ba9bf734
+* NNCDE: all 27 combinations of widths 64/128/256, learning rates
+  .01/.001/.0001, and batch sizes 64/128/256; four-fold validation NLL;
+  200 epochs, patience 20, two-half reverse cross-fit and averaged predictions.
+* DeepSurv: the original Optunity Sobol search, 50 candidate evaluations,
+  four-fold validation Harrell C-index and 1,000 epochs; simulation search ranges,
+  SELU architecture, Adam, constant learning rate and output-weight regularization.
+  This CV criterion follows simulation; final evaluation uses the definitions below.
+* NRT: by default, the simulation SearchConfig/Architecture settings, 200 trials
+  (20 startup and 180 TPE), four folds, unregularized validation NLL,
+  200 epochs, patience 50, validation every 5 epochs, warmup 10,
+  mass/shared LR .001 and split LR .0001. Refit epochs are the rounded-up median
+  of best CV epochs. Shared support is 1.1 times the largest observed training
+  endpoint, fixed before CV and independent of test outcomes.
+* ctree/Cox/AFT/DDR/ICcforest reuse the simulation backends and defaults:
+  DDR 100 epochs/patience 20; forest 100 trees with the original internal mtry
+  tuning; AFT max iterations 250. No extra external search is added.
+
+Real-data adaptations are explicit: NRT and conventional backends use training-only
+z scores; NRT CV fits each scaler on its inner training fold. DeepSurv uses
+`standardize=True` so each internal CV fit learns its own normalization; its Cox
+loss uses Breslow ties, since both real datasets have tied outcomes. The upstream
+no-ties simulation implementation is unchanged. NNCDE keeps its internal
+expanded-input normalization and original time grid; the adapter only streams
+moments, validation and gradient accumulation to bound memory. All outcomes retain
+their original units. No time jitter, row filtering, or missing-value imputation
+is applied to full runs; both supplied CSVs are complete.
+
+## Metrics
+
+All evaluation uses exactly the simulation grid: `torch.linspace(0, tau, 256)`,
+including smoke runs. `tau` is the largest **finite observed training endpoint**;
+right-censored lower bounds count as observations. The float32 construction
+matches simulation's `Dataset.bounds` and `Dataset.max_observation`. There is no
+90th-percentile cutoff, censoring-survival threshold, or test-derived horizon.
+This is separate from NRT's fitted support (1.1 times the largest training bound).
+
+### C-index
+
+**Uncensored GT: traditional Harrell C-index.** Compare all pairs with distinct
+observed outcomes, including outcomes beyond tau. A larger risk should predict
+an earlier outcome. Our common scalar risk is `-trapezoid(S_i, grid)`, the negative
+restricted mean survival time to tau, computed from each model's fitted curve.
+This choice of marker is an evaluation protocol choice; Harrell's statistic does
+not prescribe RMST. Equal observed outcomes are excluded and risk ties within
+`1e-8` receive half credit. No censoring weights are used.
+
+**Right-censored Rotterdam: Uno et al. (2011) IPCW C-index.** The fixed scalar
+risk is the evaluated model's fitted event probability `r_i=1-S_i(tau)`. This
+marker is an evaluation protocol choice; Uno's statistic accepts any scalar risk
+score. The reported `c_index` is truncated at tau. With observed time T and event
+indicator d, the implemented finite-sample convention is:
+
+```
+A_ij(t) = I(d_i=1, T_i<t) * [I(T_i<T_j) + I(T_i=T_j, d_j=0)]
+w_i = 1 / G(T_i)^2
+credit_ij = I(r_i>r_j) + 0.5*I(r_i==r_j)
+C_Uno(t) = sum_(i!=j) A_ij(t)*w_i*credit_ij / sum_(i!=j) A_ij(t)*w_i
 ```
 
-The current CSV serialization has checksum:
+`G` is marginal censoring KM fitted on the **test sample**, under the stated
+assumption that censoring is independent of both event time and prediction risk.
+Conditional independence given covariates alone would require a conditional
+censoring estimator. No Cox censoring model is used.
 
-```text
-aac5a35ec6de18a1b39bb584f5e1aa22a7c6e3348a1115d8867229ca8a0b31e8
+The implementation is numerically checked against
+`sksurv.metrics.concordance_index_ipcw(y_test, y_test, risk, tau=tau)`. Using the
+test sample as the first argument explicitly retains this analysis's test-KM
+protocol; scikit-survival's usual call instead estimates KM on training outcomes.
+Reverse KM removes tied events before calculating the censoring hazard. Tied
+event/event pairs are excluded, tied event/censor pairs are usable, and prediction
+ties within `1e-8` get half credit. The strict event boundary `T_i<tau` follows
+scikit-survival; later subjects remain available as pair comparators. These tie
+and endpoint conventions extend the paper's continuous-time formulation.
+
+Zero censoring survival at an included event makes C unavailable, rather than
+silently dropping that event. Weights are not clipped and tau is not shortened.
+A draw with no comparable pairs also has unavailable C. Metadata records whether
+censoring survival is positive at tau. Keeping the requested full grid beyond
+its support does not provide the usual IPCW identification guarantee there.
+
+Implementation: `metrics.concordance_pairs`, `concordance_ratio`,
+`uno_ipcw_weights` and `uno_concordance_curve`. For right-censored data,
+`c_index_curve.csv` saves Uno C for 256 truncation times with the same fixed risk
+`1-S(tau)` at every time. The uncensored analysis reports its single global
+Harrell C. Reference implementation:
+[scikit-survival concordance_index_ipcw](https://scikit-survival.readthedocs.io/en/stable/api/generated/sksurv.metrics.concordance_index_ipcw.html).
+
+### Brier score
+
+For Rotterdam, use the **IPCW Brier score of Yang et al. (2026), section 2.4**,
+with landmark zero, specialized to one event and exact/right censoring:
+
+```
+BS(u) = mean[ I(T_i<=u, event_i=1)*S_i(u)^2/G(T_i)
+            + I(T_i>u)*(1-S_i(u))^2/G(u) ]
+IBS = trapezoid(BS, grid) / tau
 ```
 
-Its 14 feature columns, times, event indicators, and source row identifiers were verified exactly, for both partitions, against the [author HDF5 at the recorded commit](https://github.com/jaredleekatzman/DeepSurv/blob/f0803f57bff9395f2bfbb99da2f1031adcf01331/experiments/data/support/support_train_test.h5). Both verified byte representations are accepted; any other checksum is rejected. The actual input-file hash is saved in each run's manifest.
+`S_i` is always the evaluated model's fitted event survival distribution. `G` is
+separately the censoring survival distribution, estimated on the **test sample**
+by ordinary Kaplan–Meier with `1-event` as event indicator, matching the authors'
+`survival::survfit(Surv(T, 1-event) ~ 1)` code. Thus tied outcomes use ordinary KM
+risk sets, not scikit-survival's event-before-censor reverse-KM convention. The
+case boundary is `T<=u` and control boundary `T>u`. This endpoint convention has
+no effect for continuous times and is stated explicitly for the tied real data.
 
-### METABRIC
+Already-censored subjects contribute zero; divide by `n_test`, not the sum of
+weights. Empty summands stay zero, including beyond the last follow-up where
+`G(u)=0` and no subject remains observed past u. No positive weight floor or
+shorter evaluation horizon is substituted. At those late points the estimate has
+no observed controls and relies only on event contributions; keeping the full
+grid does not restore information about unobserved tail outcomes. GT has no
+censoring, so its Brier score is simply `mean((I(T>u)-S(u))^2)`, using the usual
+binary squared-error normalization. `brier_at_horizon` is BS(tau);
+`integrated_brier_score` is the uniform, normalized trapezoidal integral over the
+same 256-point grid. Both summaries use the relevant ordinary/IPCW Brier curve.
 
-The supplied [`data/metabric/metabric_deepsurv.csv`](data/metabric/metabric_deepsurv.csv) contains 1,523 training rows (887 events) and 381 test rows (216 events), with features `x00`–`x08`. Training follow-up ranges from about 0.1 to 355.2 months; test follow-up ranges from 0 to about 337.03 months. The single test observation censored at time zero is preserved. The loader permits nonnegative follow-up and does not rescale time. METABRIC survival is measured in months in the [DeepSurv paper](https://pmc.ncbi.nlm.nih.gov/articles/PMC5828433/).
+Implementation: `metrics.brier_contributions`, `censoring_survival`, and `evaluate`.
+References: [published Yang et al. paper](https://onlinelibrary.wiley.com/doi/full/10.1002/bimj.70108),
+[author implementation](https://github.com/ZhenweiYang96/Predicitve-accuracy-metrics/blob/main/R%20script/Function/time%20dependent%20evaluation%20metrics.R).
+The implementation is for these three single-event analyses, not a general
+interval-censored competing-risk evaluator.
 
-The bundled file matches the original supplied file byte-for-byte, including row order, with SHA-256 `ba502e364efab52916d4316e97d6020e924545bef0f88802f4d77f973cf0eeb1`. A previously supplied version sorted by follow-up time has SHA-256 `d57d0ae0415b41f3c6c727ae46ab13b8677e6cd9177de503a2ea95d61f7fb3ac`. Every field in that version matches the original file exactly when rows are matched by `(split, row_in_split)`; restoring source order reproduces the original checksum. Both verified representations are accepted, and all other checksums are rejected. This verifies equivalence to the supplied CSV, not independent verification against the authors’ HDF5. The loader retains the supplied row order, so seeded CV/smoke selections can differ between representations. Each manifest records the actual input-file hash and selected indices.
+### Metric references
 
-Its time unit is recorded in the manifest, result, dataset summary, and Brier curves. METABRIC uses the same 256-point equally spaced evaluation grid in its original month units. Scores in different time units should not be pooled across datasets.
+Every `result.json` and `bootstrap.json` records the relevant metric references.
+All choices of grid, scalar risk, tie tolerance, and 500 bootstrap draws are the
+declared evaluation protocol, not claims that those choices are required by a paper.
 
-An observed death is encoded as `L = R = time`; right censoring is encoded as `L = time`, `R = infinity`.
+1. **Traditional C-index:** Harrell FE Jr, Califf RM, Pryor DB, Lee KL, Rosati RA.
+   (1982). *Evaluating the Yield of Medical Tests*. JAMA, 247(18), 2543–2546.
+   [DOI: 10.1001/jama.1982.03320430047030](https://doi.org/10.1001/jama.1982.03320430047030).
+2. **Ordinary Brier score:** Brier GW. (1950). *Verification of Forecasts Expressed
+   in Terms of Probability*. Monthly Weather Review, 78(1), 1–3.
+   [Publisher / DOI: 10.1175/1520-0493(1950)078<0001:VOFEIT>2.0.CO;2](https://journals.ametsoc.org/view/journals/mwre/78/1/1520-0493_1950_078_0001_vofeit_2_0_co_2.xml).
+3. **Right-censored IPCW C-index:** Uno H, Cai T, Pencina MJ, D'Agostino RB, Wei LJ.
+   (2011). *On the C-statistics for evaluating overall adequacy of risk prediction
+   procedures with censored survival data*. Statistics in Medicine, 30(10),
+   1105–1117. [DOI: 10.1002/sim.4154](https://doi.org/10.1002/sim.4154).
+4. **Right-censored IPCW Brier:** Yang Z, Rizopoulos D, Newcomb LF, Erler NS.
+   (2026). *Time-Dependent Predictive Accuracy Metrics in the Context of Interval
+   Censoring and Competing Risks*. Biometrical Journal, 68(1), e70108; section 2.4,
+   single-event/right-censored specialization with landmark zero.
+   [DOI: 10.1002/bimj.70108](https://doi.org/10.1002/bimj.70108).
+5. **Integrated Brier summary (IBS):** Graf E, Schmoor C, Sauerbrei W, Schumacher M.
+   (1999). *Assessment and comparison of prognostic classification schemes for
+   survival data*. Statistics in Medicine, 18(17–18), 2529–2545.
+   [PubMed / DOI: 10.1002/(SICI)1097-0258(19990915/30)18:17/18<2529::AID-SIM274>3.0.CO;2-5](https://pubmed.ncbi.nlm.nih.gov/10474158/).
+   Graf supplies the integrated-summary reference; the censored pointwise Brier
+   estimator above follows Yang.
+6. **Censoring distribution estimator:** Kaplan EL, Meier P. (1958).
+   *Nonparametric Estimation from Incomplete Observations*. Journal of the American
+   Statistical Association, 53(282), 457–481.
+   [DOI: 10.1080/01621459.1958.10501452](https://doi.org/10.1080/01621459.1958.10501452).
 
-NRT standardizes covariates with the fitting subset's means and population standard deviations, flooring standard deviations at `1e-6`. Final NRT fits use full-training statistics. DeepSurv performs its own training-data standardization. NNCDE standardizes expanded covariate-and-time inputs within each internal training half. Cox and the R tree/forest adapters receive the exported covariates without an additional shared preprocessing step.
+## Test-set bootstrap confidence intervals
 
-## 2. Models used
+After tuning/fitting, `realworld.run run` automatically computes **500 test-set
+bootstrap replicates and 95% percentile confidence intervals**. Each draw samples
+`n_test` subjects with replacement, keeping outcomes and entire prediction curves
+together. Training data, hyperparameters, fitted models and the 256-point grid
+stay fixed. For censored data, both C-index's reverse KM and Brier's ordinary KM
+are re-estimated in each draw. Copies of the same subject have tied observed
+outcomes and cannot form comparable pairs. These intervals condition on the fitted prediction model
+and do not include training/tuning uncertainty.
 
-| Method identifier | Model and purpose |
-| --- | --- |
-| `fixed_nll_cv` | NRT with fixed midpoint splits (`rho = 0.5`), giving equal-width time bins. Architecture is selected independently by validation negative log-likelihood (NLL). |
-| `adaptive_nll_cv` | NRT with covariate-dependent time splits and a width regularizer. Architecture and regularization strength are selected by validation NLL. |
-| `fixed_at_adaptive_architecture` | Fixed-split NRT using the adaptive model's selected architecture, with regularization strength zero and separate CV selection of refit epochs. This compares fixed and adaptive splits at the same architecture. |
-| `DeepSurv` | Neural Cox proportional-hazards model using the selected dataset’s embedded preset and a local adapter with Breslow handling of event-time ties. |
-| `NNCDE` | Neural conditional survival estimator with a log-hazard network. Two networks exchange training/validation halves; their survival predictions are averaged. |
-| `Cox` | Unpenalized `lifelines.CoxPHFitter`, using Efron ties for coefficient fitting and a Breslow baseline cumulative hazard. |
-| `Ctree` | Conditional inference survival tree through the existing R `partykit`/`icenReg` backend. |
-| `ICcforest` | Conditional inference survival forest through the existing R `ICcforest` backend, including training-only `mtry` tuning. |
+The seed is `20261102`; rows are sorted by original row ID, so every method uses
+the same draws. Quantiles use linear interpolation at 2.5% and 97.5%. Outputs are
+`bootstrap.json`, `bootstrap_replicates.csv`, and `brier_curve_ci.csv`; the latter
+contains pointwise intervals, not simultaneous bands. C replicates without
+comparable pairs, or with zero G at an event before tau, are excluded only from
+C intervals, with valid/invalid
+counts reported. Brier still uses every draw. Fewer than two valid C replicates
+makes its interval unavailable. Summary tables include C, IBS and Brier(tau)
+intervals and valid-draw counts.
 
-NRT estimates a conditional distribution with constant density within each leaf interval. Its finite raw-time support ends at `1.1 × max(training follow-up)` (2,231.9 days for SUPPORT). This bound is fixed from the entire outer training pool and shared across CV folds; test outcomes do not determine it. Depth `d` gives `2^d` leaves. Adaptive intervals can change with the covariates, while fixed intervals remain equally spaced.
-
-## 3. Parameters and model selection
-
-### Shared settings
-
-| Setting | Full-run value |
-| --- | --- |
-| Final fitting seed | `123` |
-| CV fold seed | `321` |
-| CV folds | `4`, using a seeded random permutation of training rows, without event stratification |
-| NRT search seed | `871` |
-| NRT fitting seed during search | `101` |
-| Test partition | Original 1,775 SUPPORT / 381 METABRIC rows, held out from fitting and selection |
-| Evaluation-grid size | Exactly `256` equally spaced points from `0` to `max_obs`, including both endpoints, for full and smoke runs |
-| Default PyTorch threads | `4` |
-
-NRT and NNCDE use CV selection. DeepSurv uses a fixed preset; Cox and Ctree use fixed settings; ICcforest tunes `mtry` internally on training data. Configuration is defined in [`tuning.py`](tuning.py). NRT search defaults, anchors, Sobol startup, and TPE parameter suggestions are local to [`nrt_search.py`](nrt_search.py); they no longer import `regularization/tuning/main.py`. NRT still reuses the model/training implementation. NNCDE retains the grid from [`../tuning/main.py`](../tuning/main.py).
-
-### NRT
-
-Each independently searched NRT method receives **200 completed trials**, including 20 initial anchor/Sobol configurations followed by Optuna TPE proposals. Each candidate uses the same four training folds. Selection minimizes validation NLL averaged with weights proportional to fold size; the training regularizer is not added to that selection score.
-
-| Parameter | Value or search range |
-| --- | --- |
-| Input dimension | Inferred: `14` for SUPPORT, `9` for METABRIC |
-| Tree depth | Integers `3`–`8`, giving 8–256 leaves |
-| Shared layers | Integers `0`–`3` |
-| Shared width | `16`, `32`, `64`, or `128`; inactive if shared layers are zero |
-| Private layers | Integers `1`–`4` |
-| Private width | `16`, `32`, `64`, or `128` |
-| Activation | SiLU in the shared trunk and between private feature layers |
-| Adaptive regularization strength `s` | `0`–`10,000`, searched in `log10(1 + s)` coordinates |
-| Fixed-model regularization strength | `0` |
-| Split minimum / total width floor | `0.1` / `8e-4` |
-| Optimizer / base learning rate | Adam / `0.001` |
-| Split-branch learning-rate ratio | `0.1`, giving split learning rate `0.0001` |
-| Batch size | `256` |
-| Maximum CV epochs | `200` |
-| Warmup | `10` epochs; adaptive splits activate afterward |
-| Validation frequency | Every `5` epochs and at the final epoch |
-| Early-stopping patience | `50` epochs |
-| Minimum improvement for patience | `0.0001` |
-| Gradient-norm limit | `1.0` |
-| CUDA graphs | Enabled when running on CUDA |
-
-The initial architecture anchor has depth 3, no shared layers, shared/private widths 32, and 3 private layers. The adaptive anchor strength is 500; initial adaptive configurations also include strengths 0, 1,000, and 10,000. These are starting points, not selected results. When a custom range is narrower, anchors are projected into that range and deduplicated before enqueueing.
-
-Edit `SearchConfig` in `nrt_search.py`, or copy [`nrt_search_space.example.json`](nrt_search_space.example.json) and pass `--nrt-search-space /absolute/path/search.json`. JSON has optional `search` and `baseline` objects; omitted keys retain local defaults. `search` controls budgets, seeds, folds, depth limits, widths, layer limits, and `strength_max`; `baseline` controls the anchor and split constraints. Input width always comes from the selected dataset. For example:
-
-```json
-{"search": {"depth_min": 2, "depth_max": 6, "widths": [16, 32], "strength_max": 500}}
-```
-
-With Slurm, set `NRT_SEARCH_SPACE` to an absolute JSON path; preparation and every worker use the same settings. Changing ranges requires a fresh output directory. `--smoke` applies small budgets first, then explicit JSON overrides, so a full example JSON also restores full search budgets.
-
-For `n` fitting observations, the objective is `mean NLL + (s / sqrt(n)) × width penalty`. The effective strength comes from the architecture's `regularization_strength`; the inherited training-config field with the same name does not set this coefficient in `fit_raw_time_kl`.
-
-Only post-warmup checkpoints are eligible. After selection, a full-training refit uses the ceiling of the median of the four best CV epochs. The matched fixed model reuses the adaptive architecture, sets `s = 0`, and performs its own four-fold epoch selection. In total, the full NRT procedure schedules `2 × 200 × 4 + 4 = 1,604` fold fits, followed by three final refits.
-
-### DeepSurv
-
-The preset in [`models.py`](models.py) uses the user-specified SUPPORT parameters with three hidden layers of 33 units each. The input width (`n_in=14`) is inferred from the 14 SUPPORT covariates. The existing 800-epoch training budget is retained.
-
-| Parameter | Value |
-| --- | --- |
-| Hidden layers | Three layers: `[33, 33, 33]` |
-| Activation | `selu` |
-| Dropout | `0.1982763671875` |
-| Batch normalization / standardization | `False` / `True` |
-| Optimizer | Adam, with default beta parameters |
-| Initial learning rate | `0.03279227024343838` |
-| Learning-rate decay | `0.000645986328125` |
-| Learning-rate schedule | `initial_lr / (1 + epoch_index × lr_decay)`, with zero-based epoch index |
-| L2 regularization | `3.54434228515625`, using the inherited output-weight L2 convention |
-| L1 regularization | `0.0` |
-| Epochs | `800`, with full-batch updates |
-| Tuning | Disabled |
-| Recorded momentum | `0.9450444335937499`; retained as preset metadata, not applied as SGD momentum to Adam |
-
-Training minimizes the Breslow-ties Cox partial-likelihood loss plus regularization. Loss and learning rate are logged at epoch 1, every 50 epochs, and the final epoch.
-
-For METABRIC the user-specified preset is:
-
-```json
-{"learning_rate": 0.0020065103592061526, "dropout": 0.034404296875000004, "lr_decay": 0.00055220703125, "momentum": 0.8109013671875, "L2_reg": 4.6593974609375, "batch_norm": false, "standardize": true, "n_in": 9, "hidden_layers_sizes": [42, 42, 42], "activation": "selu"}
-```
-
-The adapter maps `hidden_layers_sizes` to `hidden_layers` and `L2_reg` to `l2_reg`, infers `n_in=9`, and retains full-batch Adam, 800 epochs, no tuning, and the same LR schedule as SUPPORT. As for SUPPORT, momentum is recorded but does not replace Adam’s beta parameters.
-
-### NNCDE
-
-The exhaustive grid has `3 × 3 × 3 = 27` candidates:
-
-| Parameter | Value or search range |
-| --- | --- |
-| Hidden nodes per layer | `64`, `128`, or `256` |
-| Learning rate | `0.01`, `0.001`, or `0.0001` |
-| Batch size | `64`, `128`, or `256` |
-| Network | Two hidden ReLU layers and one log-hazard output |
-| Input dimension | `16` for SUPPORT / `11` for METABRIC: covariates plus interval start and stop |
-| Optimizer | Adam |
-| Maximum epochs / patience | `200` / `20` per internal network |
-| Minimum validation improvement | `1e-7` |
-| Subject microbatch | `32`, accumulating gradients within the selected batch size |
-
-Each candidate undergoes four-fold CV. Selection uses the unweighted mean of the four held-out NLL scores. Each fold fit trains two networks through internal two-half cross-fitting; held-out NLL averages their individual NLLs. This gives 108 candidate/fold fits, each containing two internal network fits.
-
-For candidate `trial` and fold `fold`, both numbered from 1, the fold-fit seed is `321 + (trial - 1) × 4 + fold`. The final selected model uses seed 123 and retains internal two-half training/validation within the full training pool (7,098 SUPPORT / 1,523 METABRIC rows). Its predictions average the two survival curves. The memory-bounded adapter retains all training time intervals rather than subsampling them.
-
-### Cox, Ctree, and ICcforest
-
-| Model | Parameters |
-| --- | --- |
-| Cox | `penalizer=0.0`; Efron ties; Breslow baseline. Baseline predictions use a right-continuous step function. |
-| Ctree | `mincriterion=0.95`, `minsplit=20`, `minbucket=7`, no explicit depth limit, `seed=123`. |
-| ICcforest | `ntree=100`, `tune_mtry=True`, `tune_ntree=100`, `step_factor=1.5`, `seed=123`. |
-
-The ICcforest R backend additionally uses `teststat="quad"`, `testtype="Univ"`, `mincriterion=0`, and `saveinfo=FALSE`. It sets `minsplit=max(2, floor(0.15 × n))` and `minbucket=max(1, floor(0.06 × n))`, giving 1,064 and 425 for the full training set. Infinite right endpoints are represented as `9,999,999` in that backend. The fitted R model uses the selected numeric `mtry`; Python's `selection.json` records the tuning settings rather than explicitly exporting that selected value.
-
-## 4. Evaluation and reported results
-
-Every model predicts survival for the same test subjects on the same grid. [`metrics.py`](metrics.py) checks prediction shape, finiteness, probability bounds, and nonincreasing survival over time.
-
-For both datasets, the evaluation support is **time 0 through the maximum observed time in the training pool**, including both endpoints: `max_obs = max(training time)`. Observed times include both deaths and right-censoring times. The test outcomes do not select or shorten this interval. The prediction/scoring grid is exactly `np.linspace(0, max_obs, 256)`, with no additional special points, landmarks, or event times. For SUPPORT, `max_obs = 2,029 days`; the NRT model support remains 2,231.9 days, a model-fitting bound distinct from the evaluation endpoint. Full and smoke runs both use 256 prediction and Brier-scoring times. Landmark-specific Brier columns are no longer exported.
-
-| Metric | Meaning | Preferred direction |
-| --- | --- | --- |
-| `c_index` | Traditional Harrell concordance on test outcomes, using the same negative RMST risk score as `c_index_ipcw`. Comparable pairs are unweighted and tied risks receive half credit. | Higher |
-| `c_index_ipcw` | Uno IPCW concordance using a common risk score: negative restricted mean survival time, calculated by trapezoidal integration from time 0 to the evaluation end. Higher risk means shorter predicted survival. | Higher |
-| `c_index_ipcw_native_risk` | Additional Uno IPCW concordance using native log-risk predictions, available only for DeepSurv and Cox. | Higher |
-| `integrated_brier_score` | Normalized integrated IPCW Brier score: `(1 / max_obs) × integral_0^max_obs BS_IPCW(t) dt`, calculated by trapezoidal quadrature. | Lower |
-| `ipcw_brier_integral` | Unnormalized integral `integral_0^max_obs BS_IPCW(t) dt`, in the dataset’s time unit. Equals `max_obs × integrated_brier_score`. | Lower |
-| `evaluation_start`, `evaluation_end`, `time_unit` | Scoring interval endpoints in the dataset’s original units. | Descriptive |
-| `min_censoring_survival` | Minimum estimated censoring survival over the scoring grid. | Diagnostic |
-| `elapsed_seconds` | Time for the current method execution, including selection work performed then, final fitting, evaluation, and artifact writing before saving the result. Reused caches affect this value. | Descriptive |
-
-Harrell concordance calls `sksurv.metrics.concordance_index_censored` using test events, observed times, and the common negative RMST risk score (`risk_definition="negative_RMST_0_to_max_obs"`). It uses all comparable test pairs without IPCW weights or a concordance-horizon cutoff. Risk scores for both C-indices are derived solely from survival predictions on the 256-point grid; observed event times used to compare outcomes do not add prediction points.
-
-Uno concordance calls [`sksurv.metrics.concordance_index_ipcw`](https://scikit-survival.readthedocs.io/en/v0.25.0/api/generated/sksurv.metrics.concordance_index_ipcw.html), estimating censoring only from training outcomes. `c_index_ipcw_tau` is the maximum training time, or the floating-point predecessor of the first time where training censoring survival reaches zero, whichever is smaller. Events strictly before this horizon receive inverse-squared censoring weights; later subjects remain comparators. `c_index_ipcw_events` records the number of eligible test events. The Uno concordance horizon can differ from the full-training-range Brier endpoint; it is not inserted into the prediction grid. Both RMST and native-risk Uno concordance use the same horizon. Native-risk Uno concordance and the unnormalized Brier integral remain supplementary diagnostics alongside the three main metrics.
-
-METABRIC uses `[0, max(training time)]` in months for RMST and Brier scoring. The Brier integral has the recorded time unit.
-
-Inverse-probability-of-censoring weights (IPCW) use a reverse Kaplan–Meier censoring estimate fitted only on training outcomes. At time `t`, observed deaths with `T <= t` contribute `S(t)^2 / G(T)`, and observations with `T > t` contribute `(1 - S(t))^2 / G(t)`. Censored observations with `T <= t` contribute zero. The sum is divided by the full test sample size. This follows the [IPCW Brier formula](https://scikit-survival.readthedocs.io/en/v0.25.0/api/generated/sksurv.metrics.brier_score.html); the normalized time average follows the [integrated Brier definition](https://scikit-survival.readthedocs.io/en/v0.25.0/api/generated/sksurv.metrics.integrated_brier_score.html).
-
-For SUPPORT, `G(2029) = 0`, and no test observation extends beyond day 2,029. The terminal control sum is therefore empty; the endpoint Brier score contains only the observed-event contributions with positive event-time weights. The implementation divides only where an indicator term contributes, avoiding undefined `0 / 0` arithmetic. It still raises an error if an observed event needs a zero `G(T)`, or a test observation extends past a scoring time with zero `G(t)`. No weights are clipped, no samples are removed, and the evaluation endpoint is not shortened. A reported `min_censoring_survival=0` is expected for the full SUPPORT interval under this convention.
-
-The custom evaluator supports day 0 and the exact training maximum. The reference library's public scoring function restricts evaluation times to the interior of test follow-up; regression tests compare against that function on admissible interior points and separately verify the endpoint by hand calculation.
-
-The workflow evaluates one original split and one final fitting seed. It does not produce confidence intervals, repeated-split estimates, bootstrap summaries, significance tests, or plots. Validation NLL remains a selection diagnostic; per the updated request, no test-NLL metric is added.
-
-Full-data scores and rankings must be read from a completed run’s `comparison.csv`; smoke runs only validate execution.
-
-## 5. Output files
-
-The default full-run destination is `realworld/output/support/` or `realworld/output/metabric/`, relative to the NRT repository root.
-
-| File | Contents |
-| --- | --- |
-| `request.json` | Data/source fingerprints, full configuration, package versions, feature names, training/test indices, CV validation indices, evaluation grid, and NRT support bound. |
-| `dataset_summary.csv` | Partition counts, events, censoring rates, and follow-up ranges. |
-| `split_assignments.csv` | CSV row, original split, source row identifier, and training CV validation fold. |
-| `status.csv` | Per-method status (`pending`, `failed`, or `ok`) and errors, written by the summarizer. |
-| `comparison.csv` | Eight rows of model metrics, dataset/profile, sample sizes, seed, scoring bounds, censoring diagnostic, risk definition, and elapsed time. |
-| `selected_parameters.csv` | Each method's selection record as a JSON string, plus the request hash. |
-| `brier_curves.csv` | Combined per-time Brier scores and censoring survival, with method labels. |
-
-The three combined files `comparison.csv`, `selected_parameters.csv`, and `brier_curves.csv` are written only after all eight methods succeed with matching request fingerprints. An incomplete summary writes `status.csv` and raises an error instead of publishing a new partial comparison.
-
-Each method has its own subdirectory:
-
-| Artifact | Contents / applicable models |
-| --- | --- |
-| `selection.json` | Selected or fixed parameters, selection criterion, and applicable CV scores/refit details. |
-| `result.json` | Metrics, runtime, device, environment, and request hash on success; error and traceback on failure. |
-| `predictions.npz` | Arrays `survival`, `times`, common `risk`, `csv_rows`, and `native_risk` (empty when unavailable). Full-data survival shape: `(1775, 256)` for SUPPORT and `(381, 256)` for METABRIC. |
-| `brier_curve.csv` | Method, time and time unit, IPCW Brier score, and estimated censoring survival. |
-| `model.pt` | NRT state dictionary; DeepSurv network/normalization/baseline state; or both NNCDE network/normalization states. Reconstruction also requires the matching model code and parameter records. |
-| `history.json` | NRT epoch history or DeepSurv logged losses and learning rates. |
-| `scaler.json` | NRT training-set feature means and standard deviations. |
-| `crossfit_details.json` | NNCDE internal-network seeds, best epochs, validation NLLs, and epochs run. |
-| `coefficients.csv`, `baseline_cumulative_hazard.csv` | Cox coefficient summary and baseline. |
-| `model.rds` | Fitted Ctree or ICcforest R artifact. |
-| `study.sqlite3`, `cv_results.csv`, `fold_cache/` | Search/CV records for independently tuned NRT models; NNCDE has CV CSV/cache records but no Optuna study. |
-| `cv/` | Fold scores and histories for the fixed model at the adaptive architecture. |
-
-## 6. Running the workflow
-
-The scripts are configured for this Fir server and reuse NRT's existing `runtime.sh` and `/home/y679zhao/envs/pt/bin/python3.14`. They use absolute project/log paths and do not depend on your submission directory. Create `realworld/log/` before submitting, since Slurm opens its logs before the script starts.
-
-Submit the full workflow from any directory:
+To update old fitted models to the new evaluation, **re-predict** on the full grid:
 
 ```bash
-mkdir -p /home/y679zhao/projects/def-anthree/y679zhao/NRT/realworld/log
-sbatch /home/y679zhao/projects/def-anthree/y679zhao/NRT/realworld/submit_support.sh
-# METABRIC uses the same eight-method pipeline and a separate output folder:
-sbatch /home/y679zhao/projects/def-anthree/y679zhao/NRT/realworld/submit_metabric.sh
-```
-
-This short CPU job checks dependencies and prepares the manifest, then submits the GPU and CPU arrays and an `afterok` summary job. The child job IDs and final CSV path are printed in `realworld/log/support_submit-<jobid>.out`. If preflight or preparation fails, no child jobs are submitted. The same driver can also be run with `bash` from the login node.
-
-Alternatively, submit the arrays directly from the NRT root:
-
-```bash
-cd /home/y679zhao/projects/def-anthree/y679zhao/NRT
-mkdir -p realworld/log
-gpu=$(sbatch --parsable realworld/run_gpu.sh)
-cpu=$(sbatch --parsable realworld/run_cpu.sh)
-gpu=${gpu%%;*}
-cpu=${cpu%%;*}
-sbatch --dependency="afterok:$gpu:$cpu" realworld/summarize.sh
-```
-
-The direct array workers initialize the shared manifest safely themselves. For a dependency check before submitting, or to rebuild a completed summary without refitting:
-
-```bash
-cd /home/y679zhao/projects/def-anthree/y679zhao/NRT
 source runtime.sh
-nrt_python realworld.run preflight --device cpu
-"$PY" -m realworld.run summarize --output-dir realworld/output/support
+"$PY" -m realworld.run reevaluate \
+  --source-output realworld/runs/full_co_recur_death_uno_km_20261102 \
+  --output realworld/runs/reevaluated_co_recur_death \
+  --bootstrap-resamples 500 --require-complete
 ```
 
-`NRT_ROOT`, `OUTDIR`, `DATA_CSV`, `DATASET`, `NRT_SEARCH_SPACE`, and `PY` remain overridable. `DATASET` defaults to `support`; the METABRIC wrapper sets it to `metabric`. Set `OUTDIR` to a fresh directory when changing configuration or code. When moving the project to a different server/path, update the `#SBATCH --chdir`, `--output`, and `--error` directives or override them on the `sbatch` command line; Slurm reads these directives before shell variables are evaluated.
+This loads the existing `.pt`/`.rds` models and saved training preprocessing on
+CPU without tuning or refitting. It verifies the original data/split, produces
+new predictions and metrics, then bootstraps them. Source training artifacts
+stay unchanged. New `reevaluation.json` and per-method `evaluation.json` record
+source paths/hashes and evaluation provenance separately from the original
+`request_hash`. Neural predictions are streamed in batches; R backends receive
+the full test set. A changed input/source requires a new reevaluation directory.
 
-The GPU array runs fixed NRT, adaptive NRT plus its matched fixed control, NNCDE, and DeepSurv. Each GPU task requests one H100 40 GB MIG instance (`--gpus=nvidia_h100_80gb_hbm3_3g.40gb:1`), four CPUs, 32 GB host memory, and two days. The CPU array runs Cox, Ctree, and ICcforest, with four CPUs, 32 GB memory, and one day per task. Scheduler logs go to `realworld/log/`.
-
-Both CPU and GPU launchers use `python -m node_runner realworld.run ...`, as do
-preparation and summary scripts. Startup checks exercise CPU tensor/BLAS
-operations, temporary storage, Python dependencies, selected R packages, and the
-requested GPU with synchronization. Python/R module-load failures and precheck
-failures exit with status 75. Recognized propagated CUDA device-unavailable and
-driver-initialization errors also exit with status 75 through `cuda_retry.py`, which
-`runtime.sh` uses to requeue only the affected array element. The default limit is
-four requeues, controlled by `NRT_MAX_PYTHON_REQUEUES`; Slurm's restart count
-enforces the limit and logs are appended. Model/data errors, out-of-memory errors,
-and device-side assertions retain their ordinary failure status. Retry handling
-does not change numerical source fingerprints, so existing completed results and
-fold caches remain usable. Direct `python -m realworld.run` calls do not invoke
-this Slurm retry wrapper.
-
-The required environment is the exact [2026-10-21 Fir snapshot](../environment/fir-20261021/README.md): Python 3.14.2, torch 2.11.0, NumPy 2.4.2, pandas 3.0.0, SciPy 1.18.1, Optuna 4.5.0, lifelines 0.30.0, scikit-learn 1.9.1, and scikit-survival 0.28.0. Distribution build suffixes and all transitive dependencies are pinned through [`requirements.txt`](requirements.txt), which includes the common NRT inventory. R 4.4.0 uses survival 3.5-8, partykit 1.3-0, icenReg 2.0.16, and ICcforest 0.5.1, with the complete R inventory in the same snapshot. Python 3.11 and scikit-survival 0.25 are historical environments, not alternatives for reproducing the current run. Follow the [cross-server guide](../ENVIRONMENT_REPLICATION.md) before installing or submitting on another server.
-
-A separate small validation run is available:
+To recompute only intervals for predictions already using the current metrics:
 
 ```bash
-"$PY" -m realworld.run run --smoke --device cpu
-"$PY" -m realworld.run run --dataset metabric --smoke --device cpu
-# Full METABRIC run with a custom search space:
-"$PY" -m realworld.run run --dataset metabric --device cuda:0 \
-  --nrt-search-space /absolute/path/search.json --output-dir realworld/output/metabric_custom
+source runtime.sh
+"$PY" -m realworld.run bootstrap \
+  --output realworld/runs/reevaluated_co_recur_death \
+  --bootstrap-resamples 500 --bootstrap-confidence 0.95 --bootstrap-seed 20261102
 ```
 
-The smoke profile uses 160 training and 80 test observations, two CV folds, two NRT trials, three NRT/NNCDE epochs, five DeepSurv epochs, and five forest trees. Its default destination is `realworld/output/<dataset>_smoke/`. Smoke outputs validate execution and are not full-data scientific results.
+This checks saved row IDs, outcomes, grid, data hash and point estimates; matching
+bootstrap artifacts are reused. Old predictions on the shorter grid must first
+be reevaluated with the previous command. Use `--dataset`/`--methods` for subsets.
+`status.csv` tracks evaluation and bootstrap completion;
+`summarize --require-complete` requires all 27 methods and their intervals.
 
-Completed results and tuning caches can be reused when their fingerprints match. The manifest checks data, source, configuration, and Python environment fingerprints; use a new output directory when these change. The three-metric evaluation with exactly 256 equally spaced grid points uses manifest schema version 4, `evaluation_support="zero_to_max_observed_training_time"`, and `evaluation_grid_definition="equally_spaced_including_endpoints"`. Older results with additional grid landmarks cannot be reused under this manifest. Existing output directories are not migrated or overwritten.
+## Dataset-specific NRT search ranges
 
-## 7. Source map
+Edit `nrt_search_spaces.json` and pass it with `--nrt-search-space`. The dataset
+keys are `gt_2011`, `rotterdam_recur` and `rotterdam_death`. The supplied file sets dataset-specific
+widths and regularization ranges. Each entry accepts a `search` object and an
+optional `baseline` object. A top-level `defaults` entry supplies common overrides;
+dataset entries take precedence. Omitted entries/fields use the selected profile's
+defaults. This file affects NRT only, including its matched fixed control. Death
+initially uses the same search ranges as recurrence: depth 3–8, widths
+8/16/32/64, and maximum regularization strength 1000; each endpoint tunes separately.
 
-| Source | Responsibility |
-| --- | --- |
-| [`data.py`](data.py) | Provenance, integrity checks, features, outcome bounds, and NRT scaling. |
-| [`models.py`](models.py) | DeepSurv preset, Cox adapter, and memory-bounded NNCDE adapter. |
-| [`tuning.py`](tuning.py), [`nrt_search.py`](nrt_search.py) | Local NRT search defaults and JSON overrides, full/smoke configurations, CV selection, caching, and refit-epoch selection. |
-| [`metrics.py`](metrics.py) | Grid construction, prediction validation, IPCW Brier scores, IBS, and concordance. |
-| [`run.py`](run.py) | Preparation, fitting, prediction, artifact saving, and complete-result summary. |
-| [`../regularization/train.py`](../regularization/train.py), [`../regularization/model.py`](../regularization/model.py) | NRT optimization, finite support, likelihood, and width penalty. |
-| [`../testing/benchmark/`](../testing/benchmark/) | Shared neural and R benchmark implementations. |
+| `search` field | Full-profile default | Meaning |
+| --- | --- | --- |
+| `depth_min`, `depth_max` | 3, 8 | Inclusive integer tree-depth bounds |
+| `widths` | `[16, 32, 64, 128]` | Candidate widths for shared/private networks |
+| `shared_layers_max` | 3 | Shared layer count ranges from 0 to this value |
+| `private_layers_max` | 4 | Private layer count ranges from 1 to this value |
+| `strength_max` | 10000 | Adaptive regularization ranges from 0 to this value, sampled in log10(1 + strength) |
+| `trials`, `initial_trials` | 200, 20 | Total trial budget and Sobol/anchor startup budget |
+| `folds`, `fold_seed` | 4, 321 | NRT-only inner CV split settings |
+| `search_seed`, `search_fit_seed` | 871, 101 | Search and inner model-fit seeds |
+
+For example, a smaller GT search and a separate recurrence depth range:
+
+```json
+{
+  "gt_2011": {
+    "search": {"depth_min": 2, "depth_max": 5, "widths": [16, 32], "strength_max": 1000}
+  },
+  "rotterdam_recur": {"search": {"depth_min": 4, "depth_max": 7}}
+}
+```
+
+The baseline supplies the first startup architecture. Omitted baseline values are
+projected into the selected ranges (nearest allowed width; clipped depth, layers
+and strength). Explicit `baseline` values must lie inside the ranges. Its allowed
+fields are `depth`, `shared_layers`, `shared_width`, `private_layers`,
+`private_width`, and `regularization_strength`; input dimension is inferred from
+the dataset. Fixed NRT uses strength zero; the matched control uses the adaptive
+winner's architecture with strength zero and its own CV epoch selection. Very
+small discrete spaces enqueue only as many unique startup points as available.
+
+Preview the resolved settings, then submit into a new output directory:
+
+```bash
+source runtime.sh
+"$PY" -m realworld.run plan --nrt-search-space realworld/nrt_search_spaces.json
+"$PY" -m realworld.submit --nrt-search-space realworld/nrt_search_spaces.json \
+  --output realworld/runs/custom_ranges --dry-run
+"$PY" -m realworld.submit --nrt-search-space realworld/nrt_search_spaces.json \
+  --output realworld/runs/custom_ranges
+```
+
+For a single local task, the same option is accepted by `realworld.run run`.
+Preparation validates all datasets and freezes the resolved settings in the
+output directory's `nrt_search_spaces.json` and `request.json`. Slurm workers and
+resume commands automatically read that frozen file. Editing the original input
+file after submission does not change queued jobs. Changing the frozen settings,
+passing different explicit settings to an existing output, or changing shared
+source code triggers a fingerprint mismatch; use a new output directory.
+Dataset manifests and NRT selections also record the effective search settings.
+Historical completed runs keep their original provenance and remain readable.
+
+## Run and resume
+
+Run from the NRT project root, using the same Python 3.14.2 / R 4.4.0 runtime:
+
+```bash
+source runtime.sh
+"$PY" -m realworld.run preflight
+"$PY" -m realworld.run run --profile smoke --output realworld/runs/smoke_example
+"$PY" -m realworld.submit --dry-run
+"$PY" -m realworld.submit
+```
+
+The submit command prepares data once, submits 24 task groups (13 GPU and 11 CPU),
+and schedules a summary after both arrays finish. Each of the three adaptive/control
+pairs runs sequentially in one task, giving 27 method results. Arrays have no
+user-imposed concurrency cap. GPU tasks use the same
+Fir H100 20GB slice and shared node/requeue checks as simulation. Resource settings
+are in `job.sh` and `submit.py`. `submission.json` records job IDs and commands.
+
+Outputs default to `runs/full_co_recur_death/`. Each analysis contains a dataset
+manifest, saved split, and one folder per method with selection, CV records,
+model, preprocessing, test predictions, Brier curve and metrics. Root
+`comparison.csv` combines available results; `status.csv` identifies pending or
+failed methods. The final summary exits unsuccessfully if any method is missing.
+`--profile smoke` uses 80 sampled rows, tiny budgets and separate output paths;
+its results must never be reported as full-analysis results.
+
+Resume a task after interruption using its original request and output directory:
+
+```bash
+"$PY" -m realworld.run run --task-id 0 --device cuda:0
+"$PY" -m realworld.run summarize --require-complete
+```
+
+NRT resumes its SQLite study and fold caches; NNCDE resumes cached folds.
+An interrupted DeepSurv search restarts that search (completed selections are
+reused). Source/configuration/data fingerprints prevent mixing different
+experiments in one output directory. Keep code fixed while production jobs run.
+Completed results remain readable by `summarize` after a source revision. Use a
+new `--output` directory for new training with revised source; historical request
+fingerprints are preserved.
+Package inventories and Python version are recorded in `request.json`; each
+method also records the actual device. Learned `.pt` objects should only be loaded
+from this trusted run with its recorded source and environment.

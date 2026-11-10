@@ -1,7 +1,8 @@
 {
   "reason": "2026-10-16: remove legacy NRT dispatch and add this exact-source alias lookup; all current NRT numerical functions and inputs are unchanged. Any other source digest is not aliased.",
   "aliases": {
-    "d0334cfde7227f949493153275d63f761456637ac79f350a280670025e92a1a6": "b9cdc6d1d640f0085b0934a664d943301bc37ac1d244ba10f5e10d806aab2e5f"
+    "d0334cfde7227f949493153275d63f761456637ac79f350a280670025e92a1a6": "b9cdc6d1d640f0085b0934a664d943301bc37ac1d244ba10f5e10d806aab2e5f",
+    "3546b4612c380d9486b260ffb96d94e0027e2a82049794e8e58c12acddc7d188": "472a947a26741811461575763d2ce8dd1f0a7296dc6183b8b56f845fc8594edb"
   },
   "files": [
     "regularization/model.py",
@@ -17,5 +18,27 @@
     "regularization/unified_nll/tuning_model.py",
     "regularization/unified_nll/cv_train.py",
     "regularization/unified_nll/nll_cv_train.py"
-  ]
+  ],
+  "partition_cleanup_validation": {
+    "scope": "Only partition_kl is supported; its numerical calculations are unchanged.",
+    "source_before": "472a947a26741811461575763d2ce8dd1f0a7296dc6183b8b56f845fc8594edb",
+    "source_after": "3546b4612c380d9486b260ffb96d94e0027e2a82049794e8e58c12acddc7d188",
+    "bitwise_equal_arrays": 32,
+    "observations": [
+      "exact",
+      "right",
+      "current",
+      "interval"
+    ],
+    "learn_splits": [
+      false,
+      true
+    ],
+    "checks": [
+      "loss",
+      "gradient",
+      "fitted_weights",
+      "survival_predictions"
+    ]
+  }
 }

@@ -2,7 +2,13 @@
 
 Run from the NRT root using the pinned Python 3.14.2 / R 4.4.0 environment.
 This procedure includes all current benchmark methods, the three default NRT
-methods, and the two node-mean-KL variants. Real-world experiments are separate.
+methods. Real-world experiments are separate.
+
+The retained reference is `nrt-29cases-20261021_105101/`. Keep it intact and use
+the fresh output directories below. The 2026-11-10 cleanup preserves the NRT
+model/data/training files and their existing source fingerprint. Its refreshed
+environment manifest describes the cleaned working tree; the reference run's
+own historical manifests remain unchanged.
 
 Both `multimodal_separate` and `multimodal_closer` exclude current status q=0.2,
 current status q=0.5, and interval censoring q=0.5: six exclusions, leaving 29
@@ -16,18 +22,18 @@ n=5000, base seed=123, mu=0, r=None, and 500 simulation replications.
 | ctree, cox, aft | 29 each | `benchmarks/tuning/cases/`: tau only |
 | iccforest | 24 censored | `benchmarks/tuning/cases/`: tau only |
 | Default NRT | 29 per method | `partition_kl/tuning/hyper_para/`: parameters, training settings, epochs and tau |
-| Node-mean-KL NRT | 29 per method | `node_mean_kl/tuning/hyper_para/`: parameters, training settings, epochs and tau |
 
 Start in a fresh shell without previous experiment overrides (`CASES`, `METHODS`,
-`HYPER_DIR`, `N_SAMPLES`, `EPOCHS`, `TRIALS`, etc.). Choose a new output root; these
-commands use scratch storage because a full run produces many cache/result files.
-Preserve the output and source files on long-term storage after the run.
+`HYPER_DIR`, `N_SAMPLES`, `EPOCHS`, `TRIALS`, etc.). Each run uses a new timestamped
+directory under the NRT project root (`NRT/nrt-29cases-YYYYMMDD_HHMMSS/`). All
+tuning data, caches, simulation results, and summaries stay in that directory,
+with separate `benchmarks/` and `partition_kl/` subdirectories.
 
 ```bash
 set -euo pipefail
 source runtime.sh
 "$PY" environment/verify.py --check-source
-RUN_ROOT="${SCRATCH:?Set SCRATCH to your experiment storage}/nrt-29cases-$(date +%Y%m%d_%H%M%S)"
+RUN_ROOT="$NRT_ROOT/nrt-29cases-$(date +%Y%m%d_%H%M%S)"
 mkdir "$RUN_ROOT"
 mkdir -p tuning/log testing/log regularization/tuning/log regularization/testing/log
 cp environment/fir-20261021/SOURCE_SHA256SUMS "$RUN_ROOT/"
@@ -63,9 +69,11 @@ and r come from simulation arguments. For custom mu/r, pass matching `--mu` and
 also pass the same `--epochs` to neural testing; defaults remain 200 for NNCDE
 and 1000 for DeepSurv. Keep the default search budgets for a full reproduction.
 
-Submit both NRT penalty experiments into separate directories. Each tuning array
-has 29 tasks (0..28). Default testing has three method tasks (0..2); node-mean-KL
-testing has two (1..2). Each task runs all retained cases and replications.
+Submit the partition-KL NRT experiment. Its tuning array has 29 tasks (0..28).
+Testing has three method tasks (0..2). Each task runs all retained cases and replications.
+NRT testing locks existing method/case and summary directories directly; it does
+not create per-replication or summary `.lock` files. Different methods and cases
+can run concurrently. A second writer to the same method/case is rejected.
 
 ```bash
 nrt_job=$(OUTDIR="$RUN_ROOT/partition_kl/tuning" sbatch --parsable \
@@ -73,12 +81,6 @@ nrt_job=$(OUTDIR="$RUN_ROOT/partition_kl/tuning" sbatch --parsable \
 nrt_job=${nrt_job%%;*}
 HYPER_DIR="$RUN_ROOT/partition_kl/tuning/hyper_para" OUTDIR="$RUN_ROOT/partition_kl/testing" \
   sbatch --dependency="afterok:$nrt_job" regularization/testing/run_nll.sh
-
-node_job=$(OUTDIR="$RUN_ROOT/node_mean_kl/tuning" sbatch --parsable \
-  regularization/tuning/tune_node_mean_kl.sh)
-node_job=${node_job%%;*}
-HYPER_DIR="$RUN_ROOT/node_mean_kl/tuning/hyper_para" OUTDIR="$RUN_ROOT/node_mean_kl/testing" \
-  sbatch --dependency="afterok:$node_job" regularization/testing/run_node_mean_kl.sh
 ```
 
 Keep code and environment fixed while jobs are queued or running. The 29-case
@@ -91,9 +93,6 @@ Rebuild complete summaries after all fits finish:
   --output-dir "$RUN_ROOT/benchmarks/testing"
 "$PY" -m regularization.testing.simulation summarize \
   --output-dir "$RUN_ROOT/partition_kl/testing"
-"$PY" -m regularization.testing.simulation summarize \
-  --methods adaptive_nll_cv,fixed_at_adaptive_architecture \
-  --output-dir "$RUN_ROOT/node_mean_kl/testing"
 ```
 
 Launchers contain Fir-specific GPU resource names and log paths. On a different

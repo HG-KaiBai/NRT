@@ -102,12 +102,14 @@ def source_files():
     """Avoid walking experiment outputs, caches, and old environment snapshots."""
     files = [p for p in ROOT.iterdir() if p.is_file() and
              (p.suffix in (".py", ".sh") or p.name == "requirements.txt")]
+    files.append(ROOT / "environment/source-compatibility.json")
     for name in ("regularization", "realworld", "testing", "tuning"):
         for folder, dirs, names in os.walk(ROOT / name):
-            dirs[:] = [d for d in dirs if not d.startswith((".", "output", "log", "hyper_para", "__pycache__"))]
+            dirs[:] = [d for d in dirs if not d.startswith((".", "output", "log", "hyper_para", "__pycache__"))
+                       and d not in ("runs", "results", "archive")]
             for filename in names:
                 path = Path(folder) / filename
-                if (path.suffix in (".py", ".R", ".sh") or filename.endswith(".example.json")
+                if (path.suffix in (".py", ".R", ".sh") or filename == "nrt_search_spaces.json"
                         or filename.startswith("requirements") and path.suffix == ".txt"):
                     files.append(path)
     return sorted(set(files))
@@ -145,8 +147,8 @@ def capture(output):
         note="SOURCE_SHA256SUMS includes working-tree edits; Git HEAD alone is insufficient."))
     write_checksums(output / "SOURCE_SHA256SUMS", source_files(), ROOT)
     write_checksums(output / "DATA_SHA256SUMS", [
-        ROOT / "realworld/data/support/support_deepsurv.csv",
-        ROOT / "realworld/data/metabric/metabric_deepsurv.csv"], ROOT)
+        ROOT / "realworld/data/gt_2011.csv",
+        ROOT / "realworld/data/rotterdam.csv"], ROOT)
     write_checksums(output / "SHA256SUMS", [p for p in output.iterdir() if p.is_file()], output)
     if any(check["returncode"] for check in (pip_check, freeze, r_check)):
         raise RuntimeError(f"An environment probe failed; inspect {output / 'validation.json'}")

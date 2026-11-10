@@ -44,7 +44,8 @@ Its `TUNING_DIR` must match this stage's `OUTDIR` for custom output directories.
 Pass matching `--output-dir` and `--cases` when rebuilding summaries. Incomplete
 selections preserve existing tables. Summary-only runs do not require CUDA.
 
-Historical benchmark CSVs remain in `output(old)/`; they are not raw resumable
-results. Model implementations and their README files remain in `benchmark/`.
+Reference tuning results remain in
+`nrt-29cases-20261021_105101/benchmarks/tuning/` at the project root.
+Model implementations and their README files remain in `benchmark/`.
 See [the full rerun procedure](../RERUN_SIMULATIONS.md) for fresh directories and
 Slurm dependencies for every simulation method.

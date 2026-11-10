@@ -1,3 +1,0 @@
-split,n,events,censored,censoring_rate,min_time,max_time,time_unit
-train,7098,4823,2275,0.32051282051282054,3.0,2029.0,days
-test,1775,1213,562,0.31661971830985913,3.0,2029.0,days

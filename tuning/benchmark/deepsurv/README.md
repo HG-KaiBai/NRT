@@ -49,9 +49,10 @@ The older `gaussian_model_0.json` values remain exported as reference constants.
 
 ## Run
 
-Open `pycode/neural_only/benchmark_methods.ipynb`. It runs DeepSurv for exact
-or right-censored observations on CUDA when available. Set
-`DEEPSURV_CUDA_TUNE=True` to enable the existing Sobol tuning workflow.
+From the project root, use `python -m tuning.main --method DeepSurv` for
+Sobol tuning and `python -m testing.simulation run --methods DeepSurv` for
+simulation. See [the full rerun procedure](../../../RERUN_SIMULATIONS.md) for
+matching input/output directories and Slurm dependencies.
 
 The code uses the normal project environment; no separate Theano environment
 or subprocess backend is required.

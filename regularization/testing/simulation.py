@@ -1,8 +1,11 @@
 """Refit frozen parameters on paired NRT simulation datasets and summarize."""
 import argparse
+from contextlib import contextmanager
 from dataclasses import asdict
+import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path
 import statistics
 import time
@@ -13,7 +16,28 @@ from ..unified_nll.train import TrainingConfig
 from ..unified_nll.tuning_model import Architecture
 from ..workflow import (ROOT, SCHEMA_VERSION, atomic_json, dataset_hash, evaluate,
                         fingerprint, load_hyperparameters, preflight, select_cases,
-                        select_methods, simulation_data, source_hash, write_csv, writer_lock)
+                        select_methods, simulation_data, source_hash, write_csv)
+
+
+@contextmanager
+def directory_lock(directory, *, blocking=False):
+    """Lock an existing output directory inode without creating a lock file.
+
+    Refits sharing a method/case directory are exclusive; different methods and
+    cases can still run concurrently. Closing the descriptor releases the lock,
+    including when the worker exits or raises an exception.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError as error:
+            raise RuntimeError(f"another worker is writing {directory}") from error
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def result_path(output, method, case, replication):
@@ -38,7 +62,7 @@ def fit_replication(args, method, case, replication, spec):
     request = make_request(args, method, case, replication, spec)
     request_hash = fingerprint(request)
     path = result_path(args.output_dir, method, case, replication)
-    with writer_lock(path.parent, f".replication_{replication:04d}.lock"):
+    with directory_lock(path.parent):
         if path.exists():
             old = json.loads(path.read_text())
             if old.get("request_hash") != request_hash:
@@ -149,7 +173,7 @@ def main(argv=None):
     if args.replications < 1 or args.n_samples < 10 or args.grid_size < 3:
         raise ValueError("invalid sample/replication/grid counts")
     if args.command == "summarize":
-        with writer_lock(args.output_dir, ".summary.lock"):
+        with directory_lock(args.output_dir, blocking=True):
             complete, pending = summarize(args.output_dir, cases, methods, args.replications,
                                           allow_incomplete=args.allow_incomplete)
         print(f"published {len(complete)} complete case tables; pending={len(pending)}")
@@ -177,10 +201,7 @@ def main(argv=None):
                 failures += result["status"] != "ok"
     summary_methods = select_methods(args.summary_methods) if args.summary_methods else methods
     # A blocking reporting lock lets the final finisher see every prior atomic JSON.
-    import fcntl
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    with (args.output_dir/".summary.lock").open("a") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
+    with directory_lock(args.output_dir, blocking=True):
         complete, pending = summarize(args.output_dir, cases, summary_methods, args.replications)
     print(f"published {len(complete)} complete case tables; pending={len(pending)}; failures={failures}")
     if failures:

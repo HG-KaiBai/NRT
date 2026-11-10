@@ -1,12 +1,5 @@
 # Current NRT tuning
 
-For the alternative **twice the mean internal-node KL**, submit
-`sbatch regularization/tuning/tune_node_mean_kl.sh` from the NRT root. It tunes
-only adaptive and its fixed-at-adaptive-architecture control, writing to
-`regularization/tuning/output_node_mean_kl`. The equivalent option is
-`--penalty node_mean_kl --methods adaptive_nll_cv,fixed_at_adaptive_architecture`;
-the original penalty remains the default for the existing launcher.
-
 From the NRT root, run `python -m regularization.tuning.main` or submit
 `sbatch regularization/tuning/tune_nll.sh`. The default GPU array has 29 tasks (0..28),
 one per case. Each task fits fixed rho, adaptive KL, and the matched architecture

@@ -1,0 +1,54 @@
+{
+  "retained_penalty": "partition_kl",
+  "tests": {
+    "command": "python -m unittest regularization.test_workflow test_gpu_reproduce_check test_launchers realworld.test_realworld -v",
+    "passed": 45
+  },
+  "numerical_equivalence": {
+    "bitwise_equal_arrays": 32,
+    "checks": [
+      "loss",
+      "gradient",
+      "fitted_weights",
+      "survival_predictions"
+    ],
+    "observation_types": [
+      "exact",
+      "right",
+      "current",
+      "interval"
+    ],
+    "learn_splits": [
+      false,
+      true
+    ]
+  },
+  "preserved_files": {
+    "retained_artifacts": 332,
+    "simulation_summary_rows": 29,
+    "archive_numerical_artifacts": 64
+  },
+  "realworld": {
+    "completed_results": 27,
+    "methods_per_dataset": 9,
+    "datasets": [
+      "gt_2011",
+      "rotterdam_death",
+      "rotterdam_recur"
+    ],
+    "summary": "realworld/runs/full_co_death_recur/comparison.csv",
+    "historical_request_fingerprints_preserved": true
+  },
+  "scan": {
+    "working_file_paths": 227550,
+    "compiled_files_checked": 2510,
+    "stale_compiled_files_removed": 3,
+    "source_metadata_files_checked": 443,
+    "archive_files_checked": 1016,
+    "full_working_tree_text_scan_completed": true,
+    "full_scan_matching_paths_rechecked": 55,
+    "remaining_references": 0,
+    "git_history_included": false
+  },
+  "note": "Numerical equivalence was checked on deterministic small fits, and saved retained artifacts were compared byte for byte. No production model was retrained. Historical simulation source manifests retain their original scientific-code hashes; the exact source alias in source-compatibility.json preserves access to retained frozen tuning specifications."
+}

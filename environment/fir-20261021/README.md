@@ -32,19 +32,14 @@ lists include transitive dependencies; the table is only a summary.
 | `SHA256SUMS` | Snapshot-file integrity; run from this snapshot directory. |
 | `validation.json` | Actual environment probe results; GPU model training is not certified by a login-node capture. |
 
-The source manifest was refreshed for the 29-case simulation revision on
-2026-10-21, with no change to the captured Python/R versions or builds.
-`SOURCE_SHA256SUMS.before-29-cases` preserves the earlier source manifest;
-`provenance.json` records the revision and six excluded case IDs. The active
-`SOURCE_SHA256SUMS` is the code baseline for the new simulation rerun.
-See [the rerun procedure](../../RERUN_SIMULATIONS.md) for job dependencies and
-fresh output directories.
-
-The subsequent CPU/GPU precheck update changes launchers and adds `node_runner.py`.
-`SOURCE_SHA256SUMS.before-node-precheck` preserves the 29-case source manifest
-before that update. The active manifest includes the shared node checks; model,
-data-generation, tuning, and simulation Python/R sources remain unchanged by this
-launcher update, preserving existing scientific result fingerprints.
+The source, data, and tool manifests were refreshed on 2026-11-10 after removing
+files unrelated to `nrt-29cases-20261021_105101/` and `realworld/`. The Python/R
+package and runtime inventory remains the original 2026-10-21 capture.
+`provenance.json` records this cleanup separately from the original capture.
+The active source manifest includes the retained 29-case workflow, launchers,
+realworld code, and its search configuration. Data hashes cover GT 2011 and
+Rotterdam. Historical manifests inside the protected simulation directory
+remain unchanged. See [the rerun procedure](../../RERUN_SIMULATIONS.md).
 
 Check the current or recreated environment from the NRT root:
 
@@ -60,7 +55,6 @@ Capture a target server for comparison without overwriting this baseline:
 "$PY" environment/capture.py --output-dir /your/path/new-target-snapshot
 ```
 
-Do not substitute the old Python 3.11 inventory in `environment/current/`.
 This snapshot contains inventories, not a transferable wheelhouse/container.
 Package/build equality and a successful verification do not establish bitwise
 identical training results across CPUs/GPUs; preserve the run protocol and compare
@@ -72,8 +66,8 @@ packages passed. Nine verifier fixtures cover a matching environment plus
 changed/missing/extra Python packages, changed cuDNN/BLAS/R versions, changed R
 packages, and snapshot tampering. Both R helpers parse, and the archive restoration
 dependency order covers all 48 user packages. No destination installation or GPU
-training was performed. Earlier model smoke results remain in the historical
-2026-10-20 record and are not presented as newly run tests.
+training was performed. The validation paragraphs below describe earlier checks. Non-preflight test
+suites were removed during the later cleanup.
 
 The 29-case revision passed the 74-test core suite and the updated 14-test launcher
 suite (two additional launcher tests, 76 distinct tests in total). CPU smoke runs

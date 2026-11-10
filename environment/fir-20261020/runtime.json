@@ -1,9 +1,0 @@
-{
-  "executable": "/home/y679zhao/envs/pt/bin/python3.14",
-  "python": "3.14.2 (main, Feb 16 2026, 15:15:32) [GCC 14.3.0]",
-  "platform": "Linux-5.14.0-687.29.1.el9_8.x86_64-x86_64-AMD_EPYC_9135_16-Core_Processor-with-glibc2.37",
-  "torch": "2.11.0",
-  "cuda_build": "12.9",
-  "cudnn": 91301,
-  "cuda_available": false
-}

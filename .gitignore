@@ -6,6 +6,4 @@ __pycache__/
 *.lock
 reproduction/
 !environment/*.json
-!environment/current/*.json
-!environment/fir-20261020/*.json
 !environment/fir-20261021/*.json

@@ -1,2 +1,0 @@
-# Search uses the same exact current-server environment as the other NRT workflows.
--r ../../requirements.txt

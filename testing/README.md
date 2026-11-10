@@ -19,7 +19,8 @@ sbatch testing/run_cpu.sh
 Neural methods read parameters and tau from `TUNING_DIR/hyper_para/<method>.csv`
 (default `tuning/output/hyper_para/`). Set `TUNING_DIR` / `--tuning-dir` to select
 a different tuning run; `HYPER_DIR` / `--hyper-dir` can override the CSV directory.
-Retained CSVs are in `testing/hyper_para(old)/`.
+Reference CSVs are in
+`nrt-29cases-20261021_105101/benchmarks/tuning/hyper_para/` at the project root.
 
 CPU benchmarks read only tau from `TUNING_DIR/cases/<case_id>.json`, validating the
 case identity and tau. They never read neural CSVs or inherit saved model parameters,
@@ -50,8 +51,8 @@ Incomplete or failed selections preserve complete tables.
 
 Match output directory, cases, and replication count to the original run.
 `main.py` accepts the same CLI. NNCDE defaults to 200 epochs, DeepSurv to 1000;
-`--epochs` overrides them. Historical CSV summaries in `output(old)/` retain all
-benchmark values, but cannot replace missing per-fit JSON records for resumption.
+`--epochs` overrides them. The reference run retains both per-fit JSON records
+and CSV summaries in `nrt-29cases-20261021_105101/benchmarks/testing/`.
 Use [the full rerun procedure](../RERUN_SIMULATIONS.md) for fresh outputs and job
 dependencies. Both multimodal distributions exclude current q=0.2/q=0.5 and
 interval q=0.5; shared case indices retain their original random seeds.

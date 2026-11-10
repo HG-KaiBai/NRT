@@ -5,9 +5,10 @@ realworld workflows: `model.py`, `tree.py`, `train.py`, `regularization.py`,
 `tuning_model.py`, `cv_train.py`, `nll_cv_train.py`, `brier.py`, and `metrics.py`,
 plus the package initializer.
 
-These files retain their original contents because they define shared model
-classes, training helpers, and the simulation source fingerprint. `brier.py`
-remains an import dependency of `cv_train.py`.
+These files define shared model classes, training helpers, and the simulation
+source fingerprint. Fixed cut vectors use the body internal-node count, allowing
+the raw-time model's probability head to include its extra tail split. Exact
+density intervals use `(a,b]`. `brier.py` remains an import dependency of `cv_train.py`.
 
 Legacy experiment drivers, searches, reports, notebooks, raw-time variants,
 local dependency overlays, and their separate results have been removed.

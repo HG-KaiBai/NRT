@@ -4,6 +4,11 @@
 `adaptive_nll_cv`, and `fixed_at_adaptive_architecture`. The retired NRT_NLL,
 NRT_Brier, and NRT_2Loss implementations and their results have been removed.
 
+The current NRT follows `regularization/NeuralRT2.tex`: the body horizon is the
+maximum finite observed training endpoint, with an additional probability split
+for the tail. Retained results below predate this change; use fresh output
+directories and refit to evaluate the current model.
+
 This working tree retains the code, data, launchers, CPU/GPU preflight checks, and pinned environment
 needed to reproduce these two reference directories:
 

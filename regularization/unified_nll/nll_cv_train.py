@@ -34,7 +34,7 @@ class NLLCVTree(CVTree):
             raw = self.split_head(self.split_encoder(features))
             rho = self.config.split_min+(1-2*self.config.split_min)*torch.sigmoid(self.split_gate*raw)
         else:
-            rho = torch.full_like(logits, .5)
+            rho = logits.new_full((len(x), self.tree.n_internal), .5)
         return self.tree(logits, rho)
 
 

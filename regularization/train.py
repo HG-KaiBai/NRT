@@ -41,12 +41,12 @@ def fit_raw_time_kl(train, valid=None, *, architecture=Architecture(),
     train_upper_bound = observed_upper_bound(train)
     upper_bound = train_upper_bound if upper_bound is None else float(upper_bound)
     if not math.isfinite(upper_bound) or upper_bound < train_upper_bound:
-        raise ValueError("upper_bound must be finite and cover the train-only raw support")
+        raise ValueError("upper_bound must be finite and cover the observed training endpoints")
     model = RawTimeKLTree(architecture, upper_bound, optimization, penalty=penalty).to(device)
     prepared = model.prepare(*train)
     validation = model.prepare(*valid) if valid is not None else None
     if validation is not None and not math.isfinite(_evaluate(model, validation)):
-        raise ValueError(f"validation observations have zero likelihood under raw support [0, {upper_bound}]")
+        raise ValueError(f"validation observations have zero likelihood with body horizon {upper_bound}")
     split = list(model.split_encoder.parameters())+list(model.split_head.parameters())
     split_ids = {id(p) for p in split}
     groups = [dict(params=[p for p in model.parameters() if id(p) not in split_ids], lr=training.lr)]
@@ -118,7 +118,7 @@ def fit_raw_time_kl(train, valid=None, *, architecture=Architecture(),
         rho = model.rho(diagnostics.x)
         info.update(rho_mean_absolute_shift=float((rho-.5).abs().mean()),
                     rho_root_mean_absolute_shift=float((rho[:, 0]-.5).abs().mean()))
-    info.update(penalty=penalty, support="raw_time_finite", upper_bound=upper_bound,
-                max_observation=train_upper_bound/1.1)
+    info.update(penalty=penalty, support="raw_time_body_tail", upper_bound=upper_bound,
+                max_observation=train_upper_bound)
     model.fit_info = info
     return model, history

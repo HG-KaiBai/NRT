@@ -1,0 +1,354 @@
+diff --git a/README.md b/README.md
+index e798f44..cd3f56a 100644
+--- a/README.md
++++ b/README.md
+@@ -4,6 +4,11 @@
+ `adaptive_nll_cv`, and `fixed_at_adaptive_architecture`. The retired NRT_NLL,
+ NRT_Brier, and NRT_2Loss implementations and their results have been removed.
+ 
++The current NRT follows `regularization/NeuralRT2.tex`: the body horizon is the
++maximum finite observed training endpoint, with an additional probability split
++for the tail. Retained results below predate this change; use fresh output
++directories and refit to evaluate the current model.
++
+ This working tree retains the code, data, launchers, CPU/GPU preflight checks, and pinned environment
+ needed to reproduce these two reference directories:
+ 
+diff --git a/realworld/README.md b/realworld/README.md
+index ef5bf3a..f3fcb0d 100644
+--- a/realworld/README.md
++++ b/realworld/README.md
+@@ -55,8 +55,9 @@ simulation datasets. No simulation tuning result is reused as a real-data optimu
+   (20 startup and 180 TPE), four folds, unregularized validation NLL,
+   200 epochs, patience 50, validation every 5 epochs, warmup 10,
+   mass/shared LR .001 and split LR .0001. Refit epochs are the rounded-up median
+-  of best CV epochs. Shared support is 1.1 times the largest observed training
+-  endpoint, fixed before CV and independent of test outcomes.
++  of best CV epochs. The shared body horizon is the largest observed training
++  endpoint, fixed before CV and independent of test outcomes. The final probability
++  split separates the last body interval from the tail beyond that horizon.
+ * ctree/Cox/AFT/DDR/ICcforest reuse the simulation backends and defaults:
+   DDR 100 epochs/patience 20; forest 100 trees with the original internal mtry
+   tuning; AFT max iterations 250. No extra external search is added.
+@@ -78,7 +79,9 @@ including smoke runs. `tau` is the largest **finite observed training endpoint**
+ right-censored lower bounds count as observations. The float32 construction
+ matches simulation's `Dataset.bounds` and `Dataset.max_observation`. There is no
+ 90th-percentile cutoff, censoring-survival threshold, or test-derived horizon.
+-This is separate from NRT's fitted support (1.1 times the largest training bound).
++This also equals NRT's body horizon; survival there equals its fitted tail mass.
++Retained runs from before the body/tail change used the old 1.1-times finite
++support and require fresh fitting to evaluate the current model.
+ 
+ ### C-index
+ 
+diff --git a/regularization/README.md b/regularization/README.md
+index 05a8a7e..c10222c 100644
+--- a/regularization/README.md
++++ b/regularization/README.md
+@@ -15,8 +15,8 @@ retains the three comparison methods from the original code.
+ `unified_nll/` retains the shared model, tree, training, and metric dependencies.
+ Standalone legacy experiments and `kl_single_case/` have been removed. The network architecture is reused from
+ `unified_nll/tuning_model.py`; the training loop is copied from
+-`unified_nll/nll_cv_train.py` and connected to the local finite-support model on the
+-original time scale.
++`unified_nll/nll_cv_train.py` and connected to the local body-and-tail model on the
++original time scale, as specified in `NeuralRT2.tex`.
+ 
+ ## Exact consistency with the existing data
+ 
+@@ -59,18 +59,35 @@ imply that different training methods produce identical models or SSE values.
+ 
+ ## Model, loss, and support
+ 
+-The model uses finite support `[0,U]` on the original time scale t:
++The model partitions the finite body `(0,U]` on the original time scale t and
++retains a separate tail mass for `T>U`. Here U is the manuscript's horizon tau;
++the data-generation field `tau` in saved CSVs remains the censoring horizon.
+ 
+ ```text
+-U = 1.1 * max(finite L/R endpoints in the 80% training pool), fixed before CV search
++U = max(finite L/R endpoints in the 80% training pool), fixed before CV search
+ K = 2**depth
++cut head: K-1 outputs; probability head: K outputs
++body masses: K; tail mass: 1
+ R(x) = -2/(depth*K) * sum_k log(width_k(x)/(U/K))
+ lambda_n = a/sqrt(n_fit)
+ objective = mean(observed-data NLL) + lambda_n * mean(R(x))
+ ```
+ 
+-Exact events use the density; censored observations use interval probabilities.
+-Right-censored observations with R=inf enter the same likelihood directly.
++The final probability output splits only the original rightmost leaf's mass at U:
++`pi_last = pi_tilde_last * sigmoid(logit_tail)` and
++`s = pi_tilde_last * sigmoid(-logit_tail)`. All other leaf masses are unchanged,
++and body masses plus s sum to one. There is no extra learned cut or tail width;
++the partition penalty uses only body widths.
++
++Exact events use the density with terminal intervals always `(a,b]`: a cut point
++belongs to its left interval, U belongs to the last body interval, and zero has
++no body density. Censored observations use body overlap probabilities, plus s
++when R=inf. In particular, `(U,inf)` has likelihood s and `S(U)=s`.
++The tail's internal distribution is unspecified. Observation preparation maps
++`L` to `min(L,U)` and any `R>U` to infinity, so an exact event beyond U becomes
++`(U,inf)` and an interval crossing U includes the whole tail. This coarsening also
++applies to validation/test observations. Survival prediction supports `[0,U]`
++and `+inf` (where survival is zero); finite prediction times beyond U are rejected.
+ Geometry and leaf widths use float64; the network and log mass use float32.
+ The minimum leaf width is `U * 0.0008/K`; rho=`0.1+0.8*sigmoid(raw)`.
+ All CV folds, candidates, and methods for a case share the same U, which is also
+@@ -89,17 +106,14 @@ observed endpoint in that fold's actual training subset.
+ 
+ Likelihood calculations remain strict: zero probabilities are not clipped to
+ epsilon. A direct fit still raises an error if a validation observation has zero
+-probability under the specified support; the shared support in normal tuning covers
+-all CV observations. If testing encounters a zero likelihood, the result stores
++likelihood after coarsening. If testing encounters a zero likelihood, the result stores
+ `test_nll=null, test_nll_infinite=true`, while SSE can still be computed normally.
+ Infinite NLL is not written as nonstandard JSON.
+ 
+-**Per-fold support issue fixed:** The old rule determined U separately from each
+-fold's training subset. With the existing data, 4 folds, and fold seed=321 reused
+-exactly, fold 3 of `ph_exact_q0.2` had 2 validation observations with zero likelihood,
+-fold 4 of `lognormal_exact_q0.2` had 1, and fold 2 of `lognormal_right_q0.2` had 1.
+-The shared support eliminates CV observations outside the support in these three
+-cases while preserving data generation, the 80/20 split, and CV indices.
++The shared body horizon keeps all CV finite endpoints within the body while
++preserving data generation, the 80/20 split, and CV indices. Fits record
++`fit_info.support=raw_time_body_tail`, `upper_bound=U`, and the unscaled maximum
++observed endpoint in the fitting subset as `max_observation`.
+ 
+ ## Part 1: tuning
+ 
+@@ -143,9 +157,10 @@ The full default tuning run requires `29 * (2*200*4 + 4) = 46516` CV fits and
+ 87 final fits. Use the JSON supplied through `--search-space` to change the
+ `search` and `baseline` fields; the baseline must lie within the search space.
+ Use a new output directory after changing model, search, training, or generation
+-settings; fingerprint checks reject old caches. The support fix also changes
+-source and request fingerprints. Keep existing tuning outputs in their original
+-directory and rerun the corrected workflow in a new directory.
++settings; fingerprint checks reject old caches. The body/tail change also changes
++source fingerprints and the probability-head checkpoint shape. Keep existing
++outputs in their original directory and refit in a new directory; old finite-support
++results and checkpoints do not describe this model.
+ 
+ ## Part 2: simulation testing
+ 
+@@ -317,7 +332,8 @@ existing complete tables if results are missing or failed.
+ ## Preflight and small validation runs
+ 
+ CPU/GPU startup checks are implemented by root `node_runner.py`, with regression
+-checks in `test_preflight.py` and `test_node_runner.py`. Other test suites and
+-standalone validation scripts were removed during cleanup. The small tuning and
++checks in `test_preflight.py` and `test_node_runner.py`. Body/tail likelihood,
++boundary, gradient, and training checks are in `regularization/test_model.py`:
++`"$PY" -m unittest regularization.test_model -v`. The small tuning and
+ simulation commands above can verify the full pipeline in fresh directories.
+ They do not reproduce the full 29-case, 500-replication experiment.
+diff --git a/regularization/model.py b/regularization/model.py
+index 61bbe41..4e6828c 100644
+--- a/regularization/model.py
++++ b/regularization/model.py
+@@ -1,12 +1,14 @@
+-"""Standalone raw-time adapter for the preserved regularized NLL network."""
++"""Raw-time NRT with finite body geometry and a final split at the tail horizon."""
+ import math
++from typing import NamedTuple
+ 
+ import torch
++from torch import nn
+ from torch.nn import functional as F
+ 
+ from .unified_nll.model import Observations
+ from .unified_nll.nll_cv_train import NLLCVOptimization, NLLCVTree
+-from .unified_nll.tree import Tree, TreeState
++from .unified_nll.tree import Tree
+ from .unified_nll.tuning_model import Architecture
+ 
+ 
+@@ -21,10 +23,20 @@ def observed_upper_bound(observed):
+     finite = endpoints[torch.isfinite(endpoints)]
+     if not len(finite) or not bool((finite >= 0).all()) or not float(finite.max()) > 0:
+         raise ValueError("need positive finite observed training endpoints")
+-    upper = 1.1 * float(finite.max())
+-    if not math.isfinite(upper):
+-        raise ValueError("support overflow")
+-    return upper
++    return float(finite.max())
++
++
++class RawTreeState(NamedTuple):
++    """Body intervals/masses and the separate, width-free mass for T > tau."""
++
++    lower: torch.Tensor
++    upper: torch.Tensor
++    log_mass: torch.Tensor
++    log_tail_mass: torch.Tensor
++
++    @property
++    def width(self):
++        return self.upper - self.lower
+ 
+ 
+ class RawGeometry(Tree):
+@@ -33,6 +45,10 @@ class RawGeometry(Tree):
+         self.register_buffer("upper_bound", torch.tensor(upper_bound, dtype=torch.float64))
+ 
+     def forward(self, logits, rho):
++        if (logits.ndim != 2 or rho.ndim != 2
++                or logits.shape != (len(rho), self.n_internal + 1)
++                or rho.shape[1] != self.n_internal):
++            raise ValueError("need 2**depth probability logits and 2**depth-1 cut proportions")
+         # Geometry is computed in float64; network and log masses stay float32.
+         lower = torch.zeros((len(logits), 1), device=logits.device, dtype=torch.float64)
+         upper = torch.ones_like(lower) * self.upper_bound
+@@ -46,19 +62,32 @@ class RawGeometry(Tree):
+             branch = logits[:, start:stop]
+             log_mass = torch.stack((log_mass+F.logsigmoid(branch),
+                                     log_mass+F.logsigmoid(-branch)), dim=-1).flatten(1)
+-        return TreeState(lower, upper, log_mass)
++        # Only the rightmost leaf is split again, at the fixed horizon tau.
++        last_mass, tail_logit = log_mass[:, -1:], logits[:, -1:]
++        body_mass = torch.cat((log_mass[:, :-1], last_mass + F.logsigmoid(tail_logit)), dim=-1)
++        tail_mass = (last_mass + F.logsigmoid(-tail_logit)).squeeze(-1)
++        return RawTreeState(lower, upper, body_mass, tail_mass)
+ 
+     def loglik(self, state, left, right, exact, log_jacobian):
+         width = state.width
+-        inside = (left[:, None] >= state.lower) & (left[:, None] < state.upper)
+-        inside |= (left[:, None] == self.upper_bound) & (state.upper == self.upper_bound)
++        inside = (left[:, None] > state.lower) & (left[:, None] <= state.upper)
+         overlap = (torch.minimum(state.upper, right[:, None])
+                    - torch.maximum(state.lower, left[:, None])).clamp_min(0)
+         fraction = torch.where(overlap > 0,
+                                overlap.clamp_min(torch.finfo(width.dtype).tiny).log()-width.log(),
+                                -torch.inf)
+         density = torch.where(inside, -width.log(), -torch.inf)
+-        return torch.logsumexp(state.log_mass + torch.where(exact[:, None], density, fraction), -1)
++        body = state.log_mass + torch.where(exact[:, None], density, fraction)
++        tail = torch.where(~exact & torch.isposinf(right), state.log_tail_mass, -torch.inf)
++        # One reduction also keeps gradients finite for tail-only observations.
++        return torch.logsumexp(torch.cat((body, tail[:, None]), dim=-1), dim=-1)
++
++    def survival(self, state, times):
++        if bool(((times < 0) | (torch.isfinite(times) & (times > self.upper_bound))).any()):
++            raise ValueError("survival is defined only on [0, tau] and at +infinity")
++        body = super().survival(state, times)
++        tail = torch.where(torch.isposinf(times)[None, :], 0., state.log_tail_mass.exp()[:, None])
++        return body + tail
+ 
+ 
+ class RawTimeKLTree(NLLCVTree):
+@@ -70,6 +99,9 @@ class RawTimeKLTree(NLLCVTree):
+             raise ValueError(f"penalty must be one of {PENALTIES}")
+         super().__init__(architecture, 1., optimization)
+         self.tree = RawGeometry(architecture, upper_bound)
++        self.mass_head = nn.Linear(architecture.private_width, self.tree.n_internal + 1)
++        nn.init.zeros_(self.mass_head.weight)
++        nn.init.zeros_(self.mass_head.bias)
+         self.penalty = penalty
+ 
+     @property
+@@ -85,6 +117,10 @@ class RawTimeKLTree(NLLCVTree):
+         if not bool(torch.isfinite(x).all() & torch.isfinite(left).all()
+                     & ~torch.isnan(right).any() & (left >= 0).all() & (right >= left).all()):
+             raise ValueError("need finite X and 0 <= L <= R <= infinity")
++        # Collapse all information beyond tau to the single tail category.
++        # In particular, an exact t > tau becomes the censored set (tau, inf).
++        left = torch.minimum(left, self.upper_bound)
++        right = torch.where(right > self.upper_bound, torch.inf, right)
+         return Observations(x, left, right, left == right, torch.zeros_like(left))
+ 
+     def terms(self, observations):
+diff --git a/regularization/train.py b/regularization/train.py
+index 921f2de..05da409 100644
+--- a/regularization/train.py
++++ b/regularization/train.py
+@@ -41,12 +41,12 @@ def fit_raw_time_kl(train, valid=None, *, architecture=Architecture(),
+     train_upper_bound = observed_upper_bound(train)
+     upper_bound = train_upper_bound if upper_bound is None else float(upper_bound)
+     if not math.isfinite(upper_bound) or upper_bound < train_upper_bound:
+-        raise ValueError("upper_bound must be finite and cover the train-only raw support")
++        raise ValueError("upper_bound must be finite and cover the observed training endpoints")
+     model = RawTimeKLTree(architecture, upper_bound, optimization, penalty=penalty).to(device)
+     prepared = model.prepare(*train)
+     validation = model.prepare(*valid) if valid is not None else None
+     if validation is not None and not math.isfinite(_evaluate(model, validation)):
+-        raise ValueError(f"validation observations have zero likelihood under raw support [0, {upper_bound}]")
++        raise ValueError(f"validation observations have zero likelihood with body horizon {upper_bound}")
+     split = list(model.split_encoder.parameters())+list(model.split_head.parameters())
+     split_ids = {id(p) for p in split}
+     groups = [dict(params=[p for p in model.parameters() if id(p) not in split_ids], lr=training.lr)]
+@@ -118,7 +118,7 @@ def fit_raw_time_kl(train, valid=None, *, architecture=Architecture(),
+         rho = model.rho(diagnostics.x)
+         info.update(rho_mean_absolute_shift=float((rho-.5).abs().mean()),
+                     rho_root_mean_absolute_shift=float((rho[:, 0]-.5).abs().mean()))
+-    info.update(penalty=penalty, support="raw_time_finite", upper_bound=upper_bound,
+-                max_observation=train_upper_bound/1.1)
++    info.update(penalty=penalty, support="raw_time_body_tail", upper_bound=upper_bound,
++                max_observation=train_upper_bound)
+     model.fit_info = info
+     return model, history
+diff --git a/regularization/tuning/README.md b/regularization/tuning/README.md
+index 210633c..73ada53 100644
+--- a/regularization/tuning/README.md
++++ b/regularization/tuning/README.md
+@@ -10,9 +10,11 @@ Data comes from `workflow.generate`, sharing benchmark seeds, tau, and the 80/20
+ split. Selected parameters, complete training settings, frozen refit epochs, and
+ tau are exported to `output/hyper_para/<method>.csv` for simulation.
+ 
+-All CV folds and methods share `U=1.1*max(finite L/R endpoints)` computed from the
++All CV folds and methods share `U=max(finite L/R endpoints)` computed from the
+ outer 80% training pool before search. The outer test set and true event times do
+-not determine support. Old per-fold-support caches are incompatible; use new
++not determine the body horizon. A final probability split at U separates the
++rightmost body interval from the tail. Old finite-support caches and checkpoints
++are incompatible; use new
+ output directories when changing the protocol:
+ 
+ ```bash
+diff --git a/regularization/unified_nll/README.md b/regularization/unified_nll/README.md
+index 92ee88c..8248697 100644
+--- a/regularization/unified_nll/README.md
++++ b/regularization/unified_nll/README.md
+@@ -5,9 +5,10 @@ realworld workflows: `model.py`, `tree.py`, `train.py`, `regularization.py`,
+ `tuning_model.py`, `cv_train.py`, `nll_cv_train.py`, `brier.py`, and `metrics.py`,
+ plus the package initializer.
+ 
+-These files retain their original contents because they define shared model
+-classes, training helpers, and the simulation source fingerprint. `brier.py`
+-remains an import dependency of `cv_train.py`.
++These files define shared model classes, training helpers, and the simulation
++source fingerprint. Fixed cut vectors use the body internal-node count, allowing
++the raw-time model's probability head to include its extra tail split. Exact
++density intervals use `(a,b]`. `brier.py` remains an import dependency of `cv_train.py`.
+ 
+ Legacy experiment drivers, searches, reports, notebooks, raw-time variants,
+ local dependency overlays, and their separate results have been removed.
+diff --git a/regularization/unified_nll/nll_cv_train.py b/regularization/unified_nll/nll_cv_train.py
+index c582816..49e3347 100644
+--- a/regularization/unified_nll/nll_cv_train.py
++++ b/regularization/unified_nll/nll_cv_train.py
+@@ -34,7 +34,7 @@ class NLLCVTree(CVTree):
+             raw = self.split_head(self.split_encoder(features))
+             rho = self.config.split_min+(1-2*self.config.split_min)*torch.sigmoid(self.split_gate*raw)
+         else:
+-            rho = torch.full_like(logits, .5)
++            rho = logits.new_full((len(x), self.tree.n_internal), .5)
+         return self.tree(logits, rho)
+ 
+ 
+diff --git a/regularization/unified_nll/tree.py b/regularization/unified_nll/tree.py
+index 2c5966d..14524ff 100644
+--- a/regularization/unified_nll/tree.py
++++ b/regularization/unified_nll/tree.py
+@@ -70,9 +70,7 @@ class Tree(nn.Module):
+         """
+         width = state.width
+         log_width = width.log()
+-        point_in_leaf = (left[:, None] >= state.lower) & (left[:, None] < state.upper)
+-        # Finite very large times can round to 1 in the transformed scale.
+-        point_in_leaf = point_in_leaf | ((left[:, None] == 1) & (state.upper == 1))
++        point_in_leaf = (left[:, None] > state.lower) & (left[:, None] <= state.upper)
+         overlap = (torch.minimum(state.upper, right[:, None])
+                    - torch.maximum(state.lower, left[:, None])).clamp_min(0)
+         tiny = torch.finfo(width.dtype).tiny

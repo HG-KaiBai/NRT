@@ -10,9 +10,11 @@ Data comes from `workflow.generate`, sharing benchmark seeds, tau, and the 80/20
 split. Selected parameters, complete training settings, frozen refit epochs, and
 tau are exported to `output/hyper_para/<method>.csv` for simulation.
 
-All CV folds and methods share `U=1.1*max(finite L/R endpoints)` computed from the
+All CV folds and methods share `U=max(finite L/R endpoints)` computed from the
 outer 80% training pool before search. The outer test set and true event times do
-not determine support. Old per-fold-support caches are incompatible; use new
+not determine the body horizon. A final probability split at U separates the
+rightmost body interval from the tail. Old finite-support caches and checkpoints
+are incompatible; use new
 output directories when changing the protocol:
 
 ```bash

@@ -55,8 +55,9 @@ simulation datasets. No simulation tuning result is reused as a real-data optimu
   (20 startup and 180 TPE), four folds, unregularized validation NLL,
   200 epochs, patience 50, validation every 5 epochs, warmup 10,
   mass/shared LR .001 and split LR .0001. Refit epochs are the rounded-up median
-  of best CV epochs. Shared support is 1.1 times the largest observed training
-  endpoint, fixed before CV and independent of test outcomes.
+  of best CV epochs. The shared body horizon is the largest observed training
+  endpoint, fixed before CV and independent of test outcomes. The final probability
+  split separates the last body interval from the tail beyond that horizon.
 * ctree/Cox/AFT/DDR/ICcforest reuse the simulation backends and defaults:
   DDR 100 epochs/patience 20; forest 100 trees with the original internal mtry
   tuning; AFT max iterations 250. No extra external search is added.
@@ -78,7 +79,9 @@ including smoke runs. `tau` is the largest **finite observed training endpoint**
 right-censored lower bounds count as observations. The float32 construction
 matches simulation's `Dataset.bounds` and `Dataset.max_observation`. There is no
 90th-percentile cutoff, censoring-survival threshold, or test-derived horizon.
-This is separate from NRT's fitted support (1.1 times the largest training bound).
+This also equals NRT's body horizon; survival there equals its fitted tail mass.
+Retained runs from before the body/tail change used the old 1.1-times finite
+support and require fresh fitting to evaluate the current model.
 
 ### C-index
 

@@ -70,9 +70,7 @@ class Tree(nn.Module):
         """
         width = state.width
         log_width = width.log()
-        point_in_leaf = (left[:, None] >= state.lower) & (left[:, None] < state.upper)
-        # Finite very large times can round to 1 in the transformed scale.
-        point_in_leaf = point_in_leaf | ((left[:, None] == 1) & (state.upper == 1))
+        point_in_leaf = (left[:, None] > state.lower) & (left[:, None] <= state.upper)
         overlap = (torch.minimum(state.upper, right[:, None])
                    - torch.maximum(state.lower, left[:, None])).clamp_min(0)
         tiny = torch.finfo(width.dtype).tiny

@@ -1,12 +1,14 @@
-"""Standalone raw-time adapter for the preserved regularized NLL network."""
+"""Raw-time NRT with finite body geometry and a final split at the tail horizon."""
 import math
+from typing import NamedTuple
 
 import torch
+from torch import nn
 from torch.nn import functional as F
 
 from .unified_nll.model import Observations
 from .unified_nll.nll_cv_train import NLLCVOptimization, NLLCVTree
-from .unified_nll.tree import Tree, TreeState
+from .unified_nll.tree import Tree
 from .unified_nll.tuning_model import Architecture
 
 
@@ -21,10 +23,20 @@ def observed_upper_bound(observed):
     finite = endpoints[torch.isfinite(endpoints)]
     if not len(finite) or not bool((finite >= 0).all()) or not float(finite.max()) > 0:
         raise ValueError("need positive finite observed training endpoints")
-    upper = 1.1 * float(finite.max())
-    if not math.isfinite(upper):
-        raise ValueError("support overflow")
-    return upper
+    return float(finite.max())
+
+
+class RawTreeState(NamedTuple):
+    """Body intervals/masses and the separate, width-free mass for T > tau."""
+
+    lower: torch.Tensor
+    upper: torch.Tensor
+    log_mass: torch.Tensor
+    log_tail_mass: torch.Tensor
+
+    @property
+    def width(self):
+        return self.upper - self.lower
 
 
 class RawGeometry(Tree):
@@ -33,6 +45,10 @@ class RawGeometry(Tree):
         self.register_buffer("upper_bound", torch.tensor(upper_bound, dtype=torch.float64))
 
     def forward(self, logits, rho):
+        if (logits.ndim != 2 or rho.ndim != 2
+                or logits.shape != (len(rho), self.n_internal + 1)
+                or rho.shape[1] != self.n_internal):
+            raise ValueError("need 2**depth probability logits and 2**depth-1 cut proportions")
         # Geometry is computed in float64; network and log masses stay float32.
         lower = torch.zeros((len(logits), 1), device=logits.device, dtype=torch.float64)
         upper = torch.ones_like(lower) * self.upper_bound
@@ -46,19 +62,32 @@ class RawGeometry(Tree):
             branch = logits[:, start:stop]
             log_mass = torch.stack((log_mass+F.logsigmoid(branch),
                                     log_mass+F.logsigmoid(-branch)), dim=-1).flatten(1)
-        return TreeState(lower, upper, log_mass)
+        # Only the rightmost leaf is split again, at the fixed horizon tau.
+        last_mass, tail_logit = log_mass[:, -1:], logits[:, -1:]
+        body_mass = torch.cat((log_mass[:, :-1], last_mass + F.logsigmoid(tail_logit)), dim=-1)
+        tail_mass = (last_mass + F.logsigmoid(-tail_logit)).squeeze(-1)
+        return RawTreeState(lower, upper, body_mass, tail_mass)
 
     def loglik(self, state, left, right, exact, log_jacobian):
         width = state.width
-        inside = (left[:, None] >= state.lower) & (left[:, None] < state.upper)
-        inside |= (left[:, None] == self.upper_bound) & (state.upper == self.upper_bound)
+        inside = (left[:, None] > state.lower) & (left[:, None] <= state.upper)
         overlap = (torch.minimum(state.upper, right[:, None])
                    - torch.maximum(state.lower, left[:, None])).clamp_min(0)
         fraction = torch.where(overlap > 0,
                                overlap.clamp_min(torch.finfo(width.dtype).tiny).log()-width.log(),
                                -torch.inf)
         density = torch.where(inside, -width.log(), -torch.inf)
-        return torch.logsumexp(state.log_mass + torch.where(exact[:, None], density, fraction), -1)
+        body = state.log_mass + torch.where(exact[:, None], density, fraction)
+        tail = torch.where(~exact & torch.isposinf(right), state.log_tail_mass, -torch.inf)
+        # One reduction also keeps gradients finite for tail-only observations.
+        return torch.logsumexp(torch.cat((body, tail[:, None]), dim=-1), dim=-1)
+
+    def survival(self, state, times):
+        if bool(((times < 0) | (torch.isfinite(times) & (times > self.upper_bound))).any()):
+            raise ValueError("survival is defined only on [0, tau] and at +infinity")
+        body = super().survival(state, times)
+        tail = torch.where(torch.isposinf(times)[None, :], 0., state.log_tail_mass.exp()[:, None])
+        return body + tail
 
 
 class RawTimeKLTree(NLLCVTree):
@@ -70,6 +99,9 @@ class RawTimeKLTree(NLLCVTree):
             raise ValueError(f"penalty must be one of {PENALTIES}")
         super().__init__(architecture, 1., optimization)
         self.tree = RawGeometry(architecture, upper_bound)
+        self.mass_head = nn.Linear(architecture.private_width, self.tree.n_internal + 1)
+        nn.init.zeros_(self.mass_head.weight)
+        nn.init.zeros_(self.mass_head.bias)
         self.penalty = penalty
 
     @property
@@ -85,6 +117,10 @@ class RawTimeKLTree(NLLCVTree):
         if not bool(torch.isfinite(x).all() & torch.isfinite(left).all()
                     & ~torch.isnan(right).any() & (left >= 0).all() & (right >= left).all()):
             raise ValueError("need finite X and 0 <= L <= R <= infinity")
+        # Collapse all information beyond tau to the single tail category.
+        # In particular, an exact t > tau becomes the censored set (tau, inf).
+        left = torch.minimum(left, self.upper_bound)
+        right = torch.where(right > self.upper_bound, torch.inf, right)
         return Observations(x, left, right, left == right, torch.zeros_like(left))
 
     def terms(self, observations):

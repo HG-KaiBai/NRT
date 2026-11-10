@@ -15,8 +15,8 @@ retains the three comparison methods from the original code.
 `unified_nll/` retains the shared model, tree, training, and metric dependencies.
 Standalone legacy experiments and `kl_single_case/` have been removed. The network architecture is reused from
 `unified_nll/tuning_model.py`; the training loop is copied from
-`unified_nll/nll_cv_train.py` and connected to the local finite-support model on the
-original time scale.
+`unified_nll/nll_cv_train.py` and connected to the local body-and-tail model on the
+original time scale, as specified in `NeuralRT2.tex`.
 
 ## Exact consistency with the existing data
 
@@ -59,18 +59,35 @@ imply that different training methods produce identical models or SSE values.
 
 ## Model, loss, and support
 
-The model uses finite support `[0,U]` on the original time scale t:
+The model partitions the finite body `(0,U]` on the original time scale t and
+retains a separate tail mass for `T>U`. Here U is the manuscript's horizon tau;
+the data-generation field `tau` in saved CSVs remains the censoring horizon.
 
 ```text
-U = 1.1 * max(finite L/R endpoints in the 80% training pool), fixed before CV search
+U = max(finite L/R endpoints in the 80% training pool), fixed before CV search
 K = 2**depth
+cut head: K-1 outputs; probability head: K outputs
+body masses: K; tail mass: 1
 R(x) = -2/(depth*K) * sum_k log(width_k(x)/(U/K))
 lambda_n = a/sqrt(n_fit)
 objective = mean(observed-data NLL) + lambda_n * mean(R(x))
 ```
 
-Exact events use the density; censored observations use interval probabilities.
-Right-censored observations with R=inf enter the same likelihood directly.
+The final probability output splits only the original rightmost leaf's mass at U:
+`pi_last = pi_tilde_last * sigmoid(logit_tail)` and
+`s = pi_tilde_last * sigmoid(-logit_tail)`. All other leaf masses are unchanged,
+and body masses plus s sum to one. There is no extra learned cut or tail width;
+the partition penalty uses only body widths.
+
+Exact events use the density with terminal intervals always `(a,b]`: a cut point
+belongs to its left interval, U belongs to the last body interval, and zero has
+no body density. Censored observations use body overlap probabilities, plus s
+when R=inf. In particular, `(U,inf)` has likelihood s and `S(U)=s`.
+The tail's internal distribution is unspecified. Observation preparation maps
+`L` to `min(L,U)` and any `R>U` to infinity, so an exact event beyond U becomes
+`(U,inf)` and an interval crossing U includes the whole tail. This coarsening also
+applies to validation/test observations. Survival prediction supports `[0,U]`
+and `+inf` (where survival is zero); finite prediction times beyond U are rejected.
 Geometry and leaf widths use float64; the network and log mass use float32.
 The minimum leaf width is `U * 0.0008/K`; rho=`0.1+0.8*sigmoid(raw)`.
 All CV folds, candidates, and methods for a case share the same U, which is also
@@ -89,17 +106,14 @@ observed endpoint in that fold's actual training subset.
 
 Likelihood calculations remain strict: zero probabilities are not clipped to
 epsilon. A direct fit still raises an error if a validation observation has zero
-probability under the specified support; the shared support in normal tuning covers
-all CV observations. If testing encounters a zero likelihood, the result stores
+likelihood after coarsening. If testing encounters a zero likelihood, the result stores
 `test_nll=null, test_nll_infinite=true`, while SSE can still be computed normally.
 Infinite NLL is not written as nonstandard JSON.
 
-**Per-fold support issue fixed:** The old rule determined U separately from each
-fold's training subset. With the existing data, 4 folds, and fold seed=321 reused
-exactly, fold 3 of `ph_exact_q0.2` had 2 validation observations with zero likelihood,
-fold 4 of `lognormal_exact_q0.2` had 1, and fold 2 of `lognormal_right_q0.2` had 1.
-The shared support eliminates CV observations outside the support in these three
-cases while preserving data generation, the 80/20 split, and CV indices.
+The shared body horizon keeps all CV finite endpoints within the body while
+preserving data generation, the 80/20 split, and CV indices. Fits record
+`fit_info.support=raw_time_body_tail`, `upper_bound=U`, and the unscaled maximum
+observed endpoint in the fitting subset as `max_observation`.
 
 ## Part 1: tuning
 
@@ -143,9 +157,10 @@ The full default tuning run requires `29 * (2*200*4 + 4) = 46516` CV fits and
 87 final fits. Use the JSON supplied through `--search-space` to change the
 `search` and `baseline` fields; the baseline must lie within the search space.
 Use a new output directory after changing model, search, training, or generation
-settings; fingerprint checks reject old caches. The support fix also changes
-source and request fingerprints. Keep existing tuning outputs in their original
-directory and rerun the corrected workflow in a new directory.
+settings; fingerprint checks reject old caches. The body/tail change also changes
+source fingerprints and the probability-head checkpoint shape. Keep existing
+outputs in their original directory and refit in a new directory; old finite-support
+results and checkpoints do not describe this model.
 
 ## Part 2: simulation testing
 
@@ -317,7 +332,8 @@ existing complete tables if results are missing or failed.
 ## Preflight and small validation runs
 
 CPU/GPU startup checks are implemented by root `node_runner.py`, with regression
-checks in `test_preflight.py` and `test_node_runner.py`. Other test suites and
-standalone validation scripts were removed during cleanup. The small tuning and
+checks in `test_preflight.py` and `test_node_runner.py`. Body/tail likelihood,
+boundary, gradient, and training checks are in `regularization/test_model.py`:
+`"$PY" -m unittest regularization.test_model -v`. The small tuning and
 simulation commands above can verify the full pipeline in fresh directories.
 They do not reproduce the full 29-case, 500-replication experiment.

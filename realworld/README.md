@@ -56,9 +56,9 @@ simulation datasets. No simulation tuning result is reused as a real-data optimu
   200 epochs, patience 50, validation every 5 epochs, warmup 10,
   mass/shared LR .001 and split LR .0001. Refit epochs are the rounded-up median
   of best CV epochs. The shared body horizon is the largest observed training
-  endpoint, fixed before CV and independent of test outcomes. The root probability
-  split separates the whole body from the tail beyond that horizon; subsequent
-  splits partition only the body.
+  endpoint, fixed before CV and independent of test outcomes. The tree partitions
+  the body, and the final probability output splits only the rightmost leaf into
+  its body mass and the tail beyond that horizon.
 * ctree/Cox/AFT/DDR/ICcforest reuse the simulation backends and defaults:
   DDR 100 epochs/patience 20; forest 100 trees with the original internal mtry
   tuning; AFT max iterations 250. No extra external search is added.

@@ -71,7 +71,7 @@ class StorageTests(unittest.TestCase):
         with patch('regularization.tuning.main.fit_raw_time_kl', side_effect=[
                 (SimpleNamespace(fit_info=info), [dict(epoch=1)]) for info in infos]), \
              patch('regularization.tuning.main.atomic_json') as save_json:
-            scores, _ = score_candidate(data, [([0], [1]), ([1], [0, 2, 3])], Architecture(),
+            scores = score_candidate(data, [([0], [1]), ([1], [0, 2, 3])], Architecture(),
                 TrainingConfig(), NLLCVOptimization(), SearchConfig(), 'cpu', upper_bound=1.)
         save_json.assert_not_called()
         self.assertEqual(scores, dict(cv_score=2.5, cv_best_epochs=[2, 5], refit_epochs=4))
@@ -81,16 +81,16 @@ class StorageTests(unittest.TestCase):
         cv_path = self.root/'final/cv_results.csv'
         data = SimpleNamespace(case=SimpleNamespace(index=0, id='case'))
         search = SearchConfig(trials=2, initial_trials=2)
-        args = (folder, 'same', data, [], METHODS[0], search, Architecture(),
+        args = (folder, data, [], METHODS[0], search, Architecture(),
                 TrainingConfig(), NLLCVOptimization(), 'cpu')
         scores = dict(cv_score=1., cv_best_epochs=[2, 2], refit_epochs=2)
         with patch('regularization.tuning.main.score_candidate',
-                   side_effect=[(scores, []), RuntimeError('interrupted')]):
+                   side_effect=[scores, RuntimeError('interrupted')]):
             with self.assertRaisesRegex(RuntimeError, 'interrupted'):
                 search_method(*args, upper_bound=1., cv_path=cv_path)
         with cv_path.open() as stream:
             self.assertEqual(len(list(csv.DictReader(stream))), 1)
-        with patch('regularization.tuning.main.score_candidate', return_value=(scores, [])) as fit:
+        with patch('regularization.tuning.main.score_candidate', return_value=scores) as fit:
             search_method(*args, upper_bound=1., cv_path=cv_path)
             self.assertEqual(fit.call_count, 1)
         with cv_path.open() as stream:

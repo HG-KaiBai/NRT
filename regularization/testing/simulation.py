@@ -23,8 +23,6 @@ from ..workflow import (ROOT, SCHEMA_VERSION, atomic_json, dataset_hash, evaluat
 
 
 TAU_BIAS_DEFINITION = "mean_test_subjects(abs(S_hat(tau|x)-S_true(tau|x)));tau=max_finite_train_endpoint"
-# The simulation driver shared by all three retained experiments.
-LEGACY_SIMULATION_SHA256 = "cef0e3a012b09902d875c2a8cbe7937954849de204e8569bd64bde36e4e3beff"
 
 
 def simulation_source_hash():
@@ -35,7 +33,6 @@ def evaluate_tau_bias(model, data):
     """Mean absolute test-subject bias at the unpadded training boundary.
 
     Dataset.tau is the censoring generator's horizon, not this model boundary.
-    The finite-support model is evaluated here too, below its 1.1*tau support.
     """
     tau = data.max_observation(data.train)
     # Float64 preserves the endpoint exactly; rounding upwards would leave the body.
@@ -51,9 +48,9 @@ def evaluate_tau_bias(model, data):
                 survival_tau_truth_mean=float(truth.mean()))
 
 
-def bias_provenance(request_hash, **extra):
+def bias_provenance(request_hash):
     return dict(status="ok", definition=TAU_BIAS_DEFINITION, request_hash=request_hash,
-                evaluation_source_sha256=simulation_source_hash(), **extra)
+                evaluation_source_sha256=simulation_source_hash())
 
 
 def has_tau_bias(saved):
@@ -146,51 +143,6 @@ def fit_replication(args, method, case, replication, spec):
         return result
 
 
-def backfill_tau_bias(args, method, case, replication, spec):
-    """Refit a frozen historical request and append bias without replacing its SSE."""
-    request = make_request(args, method, case, replication, spec)
-    path = result_path(args.output_dir, method, case, replication)
-    with directory_lock(path.parent):
-        if not path.exists():
-            raise ValueError(f"missing historical result: {path}")
-        saved = json.loads(path.read_text())
-        if saved.get("status") != "ok":
-            raise ValueError(f"backfill needs a successful historical fit: {path}")
-        if saved.get("simulation_source_sha256") not in (LEGACY_SIMULATION_SHA256, simulation_source_hash()):
-            raise ValueError(f"unrecognized historical simulation driver: {path}")
-        request["simulation_source_sha256"] = saved["simulation_source_sha256"]
-        if any(saved.get(key) != value for key, value in request.items()) or fingerprint(request) != saved["request_hash"]:
-            raise ValueError(f"frozen simulation request does not match: {path}")
-        if has_tau_bias(saved):
-            if saved["tau_bias_evaluation"]["evaluation_source_sha256"] != simulation_source_hash():
-                raise ValueError(f"bias was computed with a different evaluator: {path}")
-            return saved
-        start = time.monotonic()
-        try:
-            data, seed = simulation_data(case, spec, replication,
-                n_samples=args.n_samples, base_seed=args.base_seed)
-            if dataset_hash(data) != saved["dataset_sha256"] or data.max_observation(data.train) != saved["grid_max"]:
-                raise ValueError("regenerated data do not match the historical fit")
-            model, _ = fit_raw_time_kl(data.bounds(data.train), architecture=Architecture(**spec["parameters"]),
-                training=TrainingConfig(**spec["training_config"]),
-                optimization=NLLCVOptimization(**spec["optimization"]),
-                fixed_epochs=spec["refit_epochs"], seed=seed+1, device=args.device, penalty=spec["penalty"])
-            metrics = evaluate_tau_bias(model, data)
-            refit = evaluate(model, data, args.grid_size)
-            saved.update(metrics, tau_bias_evaluation=bias_provenance(saved["request_hash"],
-                refit_average_grid_sse=refit["average_grid_sse"],
-                refit_sse_difference=refit["average_grid_sse"]-saved["average_grid_sse"],
-                device=args.device, elapsed_seconds=time.monotonic()-start))
-            del model
-        except Exception as error:
-            saved["tau_bias_evaluation"] = dict(status="error", definition=TAU_BIAS_DEFINITION,
-                request_hash=saved["request_hash"], evaluation_source_sha256=simulation_source_hash(),
-                error=f"{type(error).__name__}: {error}", elapsed_seconds=time.monotonic()-start)
-        atomic_json(path, saved)
-        print(f"{method} {case.id} replication={replication} bias_status={saved['tau_bias_evaluation']['status']}", flush=True)
-        return saved
-
-
 def summarize(output, cases, methods, replications, *, allow_incomplete=False, metric="average_grid_sse"):
     """Publish complete case tables; preserve previous reports while fits are pending."""
     output = Path(output)
@@ -259,7 +211,7 @@ def summarize(output, cases, methods, replications, *, allow_incomplete=False, m
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command", choices=("run", "backfill-tau-bias", "summarize"))
+    p.add_argument("command", choices=("run", "summarize"))
     p.add_argument("--metric", choices=("all", "average_grid_sse", "survival_tau_absolute_bias"), default="all",
                    help="metrics to publish when summarizing (default: SSE and S(tau) absolute bias)")
     p.add_argument("--methods", default="all")
@@ -312,17 +264,15 @@ def main(argv=None):
             make_request(args, method, case, replications[0], tables[method][case.id])
     preflight(args.device, args.threads)
     failures = 0
-    backfill = args.command == "backfill-tau-bias"
     for case in cases:
         for replication in replications:
             for method in methods:
-                fit = backfill_tau_bias if backfill else fit_replication
-                result = fit(args, method, case, replication, tables[method][case.id])
-                failures += (result["tau_bias_evaluation"]["status"] if backfill else result["status"]) != "ok"
+                result = fit_replication(args, method, case, replication, tables[method][case.id])
+                failures += result["status"] != "ok"
     summary_methods = select_methods(args.summary_methods) if args.summary_methods else methods
     # A blocking reporting lock lets the final finisher see every prior atomic JSON.
     with directory_lock(args.output_dir, blocking=True):
-        for metric in (("survival_tau_absolute_bias",) if backfill else ("average_grid_sse", "survival_tau_absolute_bias")):
+        for metric in ("average_grid_sse", "survival_tau_absolute_bias"):
             complete, pending = summarize(args.output_dir, cases, summary_methods, args.replications, metric=metric)
             print(f"{metric}: published {len(complete)} complete case tables; pending={len(pending)}; failures={failures}")
     if failures:

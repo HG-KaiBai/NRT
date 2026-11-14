@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Common setup for launchers. PY and OUTDIR/HYPER_DIR/TUNING_DIR can be overridden.
-NRT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+NRT_ROOT=${NRT_ROOT:-/home/y679zhao/projects/def-anthree/y679zhao/NRT}
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
 export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
 export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}

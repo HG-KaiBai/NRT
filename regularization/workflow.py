@@ -50,7 +50,7 @@ def source_hash():
     files = [ROOT/"model.py", ROOT/"train.py", ROOT/"workflow.py", NRT_ROOT/"workflow.py",
              NRT_ROOT/"tuning/testdata2.py", ROOT/"tuning/main.py"]
     files += [ROOT/"unified_nll"/f"{name}.py" for name in
-              ("model", "tree", "train", "regularization", "tuning_model", "cv_train", "nll_cv_train")]
+              ("model", "tree", "train", "tuning_model", "nll_cv_train", "metrics")]
     digest = hashlib.sha256()
     for path in files:
         digest.update(str(path.relative_to(NRT_ROOT)).encode())

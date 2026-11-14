@@ -12,11 +12,12 @@ retains the three comparison methods from the original code.
 | `adaptive_nll_cv` | Learn rho, KL strength a≥0 | Search architectures and a independently |
 | `fixed_at_adaptive_architecture` | Fixed rho=0.5, a=0 | Use the architecture selected by adaptive, with a separate CV run to determine its own training epochs |
 
-`unified_nll/` retains the shared model, tree, training, and metric dependencies.
-Standalone legacy experiments and `kl_single_case/` have been removed. The network architecture is reused from
-`unified_nll/tuning_model.py`; the training loop is copied from
-`unified_nll/nll_cv_train.py` and connected to the local body-and-tail model on the
-original time scale, as specified in `NeuralRT2.tex`.
+`model.py` implements the body tree and terminal tail split on the original time
+scale, matching `nrt-body-tail-20261110_140942`. `train.py` contains the single
+training loop used by CV and final refits. `unified_nll/` retains only the shared
+network, configuration, geometry, evaluation, and CUDA helpers used by this
+workflow and realworld. Unused transformed-time models, Brier-CV routines, and
+duplicate training loops have been removed.
 
 ## Exact consistency with the existing data
 
@@ -73,19 +74,20 @@ lambda_n = a/sqrt(n_fit)
 objective = mean(observed-data NLL) + lambda_n * mean(R(x))
 ```
 
-The first probability output splits the root at U into the whole body and the
-terminal tail: `p_body = sigmoid(logits[:, 0])` and `s = sigmoid(-logits[:, 0])`.
-The remaining K-1 probability outputs follow breadth-first order in a body subtree
-with `depth` levels on `(0,U]`, producing conditional body masses `pi_tilde_k` that sum
-to one. Every body mass is `pi_k = p_body * pi_tilde_k`, so body masses plus s
-sum to one. Here depth counts only body levels, excluding the root body/tail split.
+The first K-1 probability outputs follow breadth-first order through the
+depth-level tree on `(0,U]`, producing provisional masses `pi_tilde_k` that sum
+to one. The final probability output splits only the rightmost leaf at U:
+`pi_last = pi_tilde_last * sigmoid(logits[:, -1])` and
+`s = pi_tilde_last * sigmoid(-logits[:, -1])`. All earlier masses are unchanged,
+so the K body masses and one tail mass sum to one. Depth counts only body levels.
 There is no extra learned cut or tail width; the partition penalty uses only body
-widths. Network dimensions, initialization, and the fitting procedure are unchanged.
+widths. Zero logits initialize earlier body masses to `1/K`, and the last body
+mass and tail mass to `1/(2*K)` each.
 
 Exact events use the density with terminal intervals always `(a,b]`: a cut point
 belongs to its left interval, U belongs to the last body interval, and zero has
 no body density. With `q_k` the exact density or interval-overlap fraction in leaf k,
-the likelihood is `p_body * sum_k(pi_tilde_k * q_k) + s * I(R=inf)`.
+the likelihood is `sum_k(pi_k * q_k) + s * I(R=inf)`.
 In particular, `(U,inf)` has likelihood s and `S(U)=s`.
 The tail's internal distribution is unspecified. Observation preparation maps
 `L` to `min(L,U)` and any `R>U` to infinity, so an exact event beyond U becomes
@@ -161,11 +163,10 @@ The full default tuning run requires `29 * (2*200*4 + 4) = 46516` CV fits and
 87 final fits. Use the JSON supplied through `--search-space` to change the
 `search` and `baseline` fields; the baseline must lie within the search space.
 Use a new output directory after changing model, search, training, or generation
-settings; fingerprint checks reject old caches. Moving the body/tail split to the
-root changes source fingerprints and the meaning/order of probability outputs,
-even though head dimensions match the previous terminal-tail model. Keep existing
-outputs in their original directory and refit in a new directory; neither old
-finite-support nor terminal-tail results/checkpoints describe this model.
+settings; fingerprint checks reject old caches. The terminal-tail restoration and
+code cleanup change source fingerprints. Root-tail checkpoints have the same
+head dimensions but a different interpretation of their outputs. Keep historical
+outputs in their original directories and refit in a new directory.
 
 ## Part 2: simulation testing
 
@@ -199,7 +200,7 @@ finite observed training endpoint for every structure, including exact cases.
 It takes the absolute value before averaging subjects. This is distinct from the
 generator's saved censoring tau and the finite model's padded support bound.
 Its replication mean and sample SD are reported like SSE. See the
-[testing guide](testing/README.md) for the three-structure historical backfill and comparison.
+[testing guide](testing/README.md) for body-tail simulation output and summaries.
 
 ## Running the workflow
 
@@ -231,7 +232,28 @@ Check task configurations without running training:
 "$PY" -m regularization.testing.simulation run --dry-run
 ```
 
-Submit the full tuning run, then submit testing after all tuning tasks succeed.
+For a fresh full run on Fir after pulling the repository, submit both stages with:
+
+```bash
+bash regularization/submit.sh
+```
+
+This creates `reproduction/nrt-body-tail-<timestamp>/`, prepares Slurm log paths,
+and submits testing with an `afterok` dependency on the complete tuning array.
+All launchers use the hardcoded Fir project path
+`/home/y679zhao/projects/def-anthree/y679zhao/NRT`, including when Slurm spools the
+scripts. No script-directory lookup is used. `NRT_RUN_DIR` sets an explicit
+absolute run directory; `TUNING_ARRAY` and `TESTING_ARRAY` override array ranges. Other
+launcher environment settings are inherited. Positional arguments are passed
+to tuning only. For example, a one-case smoke run is:
+
+```bash
+CASES=ph_right_q0.2 TUNING_ARRAY=0 EPOCHS=3 TRIALS=2 INITIAL_TRIALS=2 \
+N_SAMPLES=128 REPLICATIONS=2 bash regularization/submit.sh \
+  --folds 2 --warmup-epochs 1 --validation-every 1 --no-cuda-graphs
+```
+
+Alternatively, submit the full tuning run, then submit testing after all tuning tasks succeed.
 The shared-support fix covers the default CV folds for all 29 cases. Use a new
 output directory for new experiments to avoid reusing caches from before the fix.
 You can also tune and simulate a subset independently with `--cases`.

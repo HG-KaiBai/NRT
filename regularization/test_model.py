@@ -9,7 +9,6 @@ from .model import RawGeometry, RawTimeKLTree, observed_upper_bound
 from .train import fit_raw_time_kl
 from .unified_nll.nll_cv_train import NLLCVOptimization
 from .unified_nll.train import TrainingConfig
-from .unified_nll.tree import Tree
 from .unified_nll.tuning_model import Architecture
 
 
@@ -24,9 +23,9 @@ class BodyTailTests(unittest.TestCase):
         self.tree = RawGeometry(self.arch, 8.)
 
     def state(self, n=1, *, gradients=False):
-        # The root assigns .8 to the body and .2 to the tail. The four
-        # width-2 body intervals have conditional masses .1, .3, .36, .24.
-        probs = torch.tensor([[.8, .4, .25, .6]], dtype=torch.float64).repeat(n, 1)
+        # Four width-2 body intervals. Before the final split their masses
+        # are .1, .3, .36, .24; afterwards the last mass is .072, tail .168.
+        probs = torch.tensor([[.4, .25, .6, .3]], dtype=torch.float64).repeat(n, 1)
         logits = torch.logit(probs).requires_grad_(gradients)
         rho = torch.full((n, 3), .5, dtype=torch.float64, requires_grad=gradients)
         return self.tree(logits, rho), logits, rho
@@ -34,64 +33,59 @@ class BodyTailTests(unittest.TestCase):
     def likelihood(self, left, right):
         left, right = (torch.tensor(v, dtype=torch.float64) for v in (left, right))
         state, _, _ = self.state(len(left))
-        return self.tree.loglik(state, left, right, left == right, torch.zeros_like(left)).exp()
+        return self.tree.loglik(state, left, right, left == right).exp()
 
     def test_observed_horizon_has_no_padding(self):
         x = torch.zeros(3, 2)
         left, right = torch.tensor([0., 3., 5.]), torch.tensor([7., 3., torch.inf])
         self.assertEqual(observed_upper_bound((x, left, right)), 7.)
 
-    def test_root_splits_body_and_tail_and_total_mass_is_one(self):
+    def test_only_rightmost_mass_is_split_and_total_mass_is_one(self):
         state, _, _ = self.state()
         torch.testing.assert_close(state.upper, torch.tensor([[2., 4., 6., 8.]], dtype=torch.float64))
         torch.testing.assert_close(state.log_mass.exp(),
-                                   torch.tensor([[.08, .24, .288, .192]], dtype=torch.float64))
-        torch.testing.assert_close(state.log_tail_mass.exp(), torch.tensor([.2], dtype=torch.float64))
+                                   torch.tensor([[.1, .3, .36, .072]], dtype=torch.float64))
+        torch.testing.assert_close(state.log_tail_mass.exp(), torch.tensor([.168], dtype=torch.float64))
         torch.testing.assert_close(state.log_mass.exp().sum(-1) + state.log_tail_mass.exp(),
                                    torch.ones(1, dtype=torch.float64))
 
-    def test_root_reweights_all_body_leaves_without_changing_partition(self):
+    def test_exact_density_is_left_open_right_closed(self):
+        times = [0., 1., 2., 4., 6., 8.]
+        expected = torch.tensor([0., .05, .05, .15, .18, .036], dtype=torch.float64)
+        torch.testing.assert_close(self.likelihood(times, times), expected)
+
+    def test_tail_logit_changes_only_the_last_body_mass(self):
         state, logits, rho = self.state()
-        logits[:, 0] = torch.logit(torch.tensor(.3, dtype=logits.dtype))
+        logits[:, -1] = torch.logit(torch.tensor(.8, dtype=logits.dtype))
         updated = self.tree(logits, rho)
         torch.testing.assert_close(updated.lower, state.lower)
         torch.testing.assert_close(updated.upper, state.upper)
-        torch.testing.assert_close(updated.log_mass.exp(), state.log_mass.exp() * (.3/.8))
-        torch.testing.assert_close(updated.log_tail_mass.exp(), torch.tensor([.7], dtype=logits.dtype))
+        torch.testing.assert_close(updated.log_mass[:, :-1], state.log_mass[:, :-1])
+        torch.testing.assert_close(updated.log_mass[:, -1].exp(), torch.tensor([.192], dtype=logits.dtype))
+        torch.testing.assert_close(updated.log_tail_mass.exp(), torch.tensor([.048], dtype=logits.dtype))
 
-    def test_tail_mass_is_independent_of_body_branches_and_cuts(self):
+    def test_tail_mass_depends_on_rightmost_path_but_not_cut_locations(self):
         state, logits, rho = self.state()
-        logits[:, 1:] = torch.tensor([[2., -3., 4.]], dtype=logits.dtype)
         rho[:] = torch.tensor([[.2, .7, .4]], dtype=rho.dtype)
         updated = self.tree(logits, rho)
         torch.testing.assert_close(updated.log_tail_mass, state.log_tail_mass)
-        torch.testing.assert_close(updated.log_mass.exp().sum(-1), state.log_mass.exp().sum(-1))
-
-    def test_exact_density_is_left_open_right_closed(self):
-        times = [0., 1., 2., 4., 6., 8.]
-        expected = torch.tensor([0., .04, .04, .12, .144, .096], dtype=torch.float64)
-        torch.testing.assert_close(self.likelihood(times, times), expected)
-
-    def test_shared_tree_uses_same_density_boundaries(self):
-        tree = Tree(depth=1)
-        state = tree(torch.logit(torch.tensor([[.2]], dtype=torch.float64)),
-                     torch.tensor([[.5]], dtype=torch.float64))
-        for t, expected in [(0., 0.), (.5, .4), (1., 1.6)]:
-            point = torch.tensor([t], dtype=torch.float64)
-            actual = tree.loglik(state, point, point, torch.tensor([True]), point * 0).exp()
-            torch.testing.assert_close(actual, torch.tensor([expected], dtype=torch.float64))
+        logits[:, 1] = -4.  # Left subtree is not on the rightmost path.
+        torch.testing.assert_close(self.tree(logits, rho).log_tail_mass, state.log_tail_mass)
+        logits[:, 0] = torch.logit(torch.tensor(.8, dtype=logits.dtype))
+        torch.testing.assert_close(self.tree(logits, rho).log_tail_mass.exp(),
+                                   torch.tensor([.056], dtype=logits.dtype))
 
     def test_mixed_censoring_includes_tail_only_for_infinite_right(self):
         actual = self.likelihood([0., 2., 3., 8., 0., 6.],
                                  [math.inf, 6., 7., math.inf, 4., 8.])
-        expected = torch.tensor([1., .528, .504, .2, .32, .192], dtype=torch.float64)
+        expected = torch.tensor([1., .66, .546, .168, .4, .072], dtype=torch.float64)
         torch.testing.assert_close(actual, expected)
 
     def test_survival_matches_interval_likelihood_and_tail(self):
         state, _, _ = self.state()
         times = torch.tensor([0., 1., 2., 4., 6., 8., math.inf], dtype=torch.float64)
         actual = self.tree.survival(state, times).squeeze(0)
-        expected = torch.tensor([1., .96, .92, .68, .392, .2, 0.], dtype=torch.float64)
+        expected = torch.tensor([1., .95, .9, .6, .24, .168, 0.], dtype=torch.float64)
         torch.testing.assert_close(actual, expected)
         torch.testing.assert_close(actual[:-1], self.likelihood(times[:-1].tolist(), [math.inf] * 6))
         with self.assertRaisesRegex(ValueError, "survival is defined only"):
@@ -123,9 +117,12 @@ class BodyTailTests(unittest.TestCase):
                     self.assertEqual(model.rho(x).shape, (3, 2**depth - 1))
                     state = model(x)
                     self.assertEqual(state.width.shape, (3, 2**depth))
-                    torch.testing.assert_close(state.log_tail_mass.exp(), torch.full((3,), .5))
-                    torch.testing.assert_close(state.log_mass.exp(),
-                                               torch.full((3, 2**depth), .5 / 2**depth))
+                    torch.testing.assert_close(state.log_mass[:, :-1].exp(),
+                                               torch.full((3, 2**depth - 1), 1. / 2**depth))
+                    torch.testing.assert_close(state.log_mass[:, -1].exp(),
+                                               torch.full((3,), 1. / 2**(depth+1)))
+                    torch.testing.assert_close(state.log_tail_mass.exp(),
+                                               torch.full((3,), 1. / 2**(depth+1)))
                     torch.testing.assert_close(state.log_mass.exp().sum(-1) + state.log_tail_mass.exp(),
                                                torch.ones(3))
 
@@ -133,34 +130,32 @@ class BodyTailTests(unittest.TestCase):
         state, logits, rho = self.state(4, gradients=True)
         left = torch.tensor([8., 1., 3., 5.], dtype=torch.float64)
         right = torch.tensor([math.inf, 1., 7., math.inf], dtype=torch.float64)
-        loss = -self.tree.loglik(state, left, right, left == right, torch.zeros_like(left)).mean()
+        loss = -self.tree.loglik(state, left, right, left == right).mean()
         loss.backward()
         self.assertTrue(torch.isfinite(logits.grad).all())
         self.assertTrue(torch.isfinite(rho.grad).all())
-        torch.testing.assert_close(logits.grad[0],
-                                   torch.tensor([.8/4, 0., 0., 0.], dtype=logits.dtype))
-        torch.testing.assert_close(rho.grad[0], torch.zeros_like(rho.grad[0]))
+        self.assertGreater(float(logits.grad[0, -1]), 0.)
 
-    def test_exact_and_tail_only_nll_gradients(self):
+    def test_exact_and_tail_only_nll_gradients_follow_terminal_paths(self):
         state, logits, rho = self.state(2, gradients=True)
         left = torch.tensor([1., 8.], dtype=logits.dtype)
         right = torch.tensor([1., math.inf], dtype=logits.dtype)
-        loss = -self.tree.loglik(state, left, right, left == right, torch.zeros_like(left)).sum()
+        loss = -self.tree.loglik(state, left, right, left == right).sum()
         loss.backward()
         torch.testing.assert_close(logits.grad,
-                                   torch.tensor([[-.2, -.6, -.75, 0.], [.8, 0., 0., 0.]],
+                                   torch.tensor([[-.6, -.75, 0., 0.], [.4, 0., .6, .3]],
                                                 dtype=logits.dtype))
         torch.testing.assert_close(rho.grad[1], torch.zeros_like(rho.grad[1]))
 
-    def test_extreme_root_logits_keep_likelihood_and_gradients_finite(self):
-        for root in (-1000., 1000.):
-            with self.subTest(root=root):
-                logits = torch.tensor([[root, 0., 0., 0.]] * 3, requires_grad=True)
+    def test_extreme_tail_logits_keep_likelihood_and_gradients_finite(self):
+        for tail in (-1000., 1000.):
+            with self.subTest(tail=tail):
+                logits = torch.tensor([[0., 0., 0., tail]] * 3, requires_grad=True)
                 rho = torch.full((3, 3), .5, requires_grad=True)
                 state = self.tree(logits, rho)
-                left = torch.tensor([1., 8., 3.], dtype=torch.float64)
-                right = torch.tensor([1., math.inf, math.inf], dtype=torch.float64)
-                likelihood = self.tree.loglik(state, left, right, left == right, torch.zeros_like(left))
+                left = torch.tensor([7., 8., 3.], dtype=torch.float64)
+                right = torch.tensor([7., math.inf, math.inf], dtype=torch.float64)
+                likelihood = self.tree.loglik(state, left, right, left == right)
                 self.assertTrue(torch.isfinite(likelihood).all())
                 (-likelihood.sum()).backward()
                 self.assertTrue(torch.isfinite(logits.grad).all())
@@ -174,7 +169,7 @@ class BodyTailTests(unittest.TestCase):
         _, before = model.terms(observations)
         self.assertGreater(float(before.detach()), 0.)
         with torch.no_grad():
-            model.mass_head.bias[0] = 5.
+            model.mass_head.bias[-1] = 5.
         _, after = model.terms(observations)
         torch.testing.assert_close(before, after)
 
@@ -195,7 +190,7 @@ class BodyTailTests(unittest.TestCase):
                     self.assertEqual(model.fit_info["max_observation"], 8.)
                     self.assertEqual(model.fit_info["support"], "raw_time_body_tail")
                     self.assertTrue(all(math.isfinite(row["objective"]) for row in history))
-                    self.assertNotEqual(float(model.mass_head.bias[0].detach()), 0.)
+                    self.assertNotEqual(float(model.mass_head.bias[-1].detach()), 0.)
                     survival = model.predict_survival(x, torch.tensor([0., 4., 8.]), batch_size=3)
                     self.assertTrue(torch.isfinite(survival).all())
                     self.assertTrue((survival[:, :-1] >= survival[:, 1:]).all())

@@ -13,13 +13,7 @@
 #SBATCH --requeue
 #SBATCH --open-mode=append
 set -euo pipefail
-if [[ -z ${NRT_ROOT:-} ]]; then
-  if [[ -n ${SLURM_JOB_ID:-} ]]; then
-    NRT_ROOT=/home/y679zhao/projects/def-anthree/y679zhao/NRT
-  else
-    NRT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-  fi
-fi
+NRT_ROOT=/home/y679zhao/projects/def-anthree/y679zhao/NRT
 source "$NRT_ROOT/runtime.sh"
 METHOD_NAMES=(fixed_nll_cv adaptive_nll_cv fixed_at_adaptive_architecture)
 SELECTED_METHODS=${METHODS:-all}

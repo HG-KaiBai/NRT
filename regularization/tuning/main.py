@@ -113,50 +113,52 @@ def score_candidate(data, splits, architecture, training, optimization, search, 
     epochs = [r["best_epoch"] for r in records]
     return dict(cv_score=float(np.average([r["validation_nll"] for r in records],
                                           weights=[r["n_valid"] for r in records])),
-                cv_best_epochs=epochs, refit_epochs=math.ceil(float(np.median(epochs)))), records
+                cv_best_epochs=epochs, refit_epochs=math.ceil(float(np.median(epochs))))
 
 
-def search_method(folder, request_hash, data, splits, method, search, baseline, training, optimization, device,
+def search_method(folder, data, splits, method, search, baseline, training, optimization, device,
                   *, upper_bound, penalty="partition_kl", cv_path=None):
     optuna = optuna_module()
     adaptive = method == SEARCH_METHODS[1]
     optimization = replace(optimization, learn_splits=adaptive)
     folder.mkdir(parents=True, exist_ok=True)
     storage = optuna.storages.RDBStorage(f"sqlite:///{(folder/'study.sqlite3').resolve()}")
-    study = optuna.create_study(study_name=method, direction="minimize", storage=storage, load_if_exists=True)
-    cv_path = folder/"cv_results.csv" if cv_path is None else cv_path
-    if not study.trials:
-        for row in startup(search, baseline, adaptive, search.search_seed+data.case.index):
-            study.enqueue_trial(row)
-    while True:
-        completed = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
-        if len(completed) >= search.trials:
-            break
-        running = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.RUNNING,))
-        if len(running) > 1:
-            raise RuntimeError("study has multiple running trials")
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", optuna.exceptions.ExperimentalWarning)
-            study.sampler = optuna.samplers.TPESampler(seed=search.search_seed+1009*data.case.index+len(completed),
-                n_startup_trials=search.initial_trials, multivariate=True, group=True, n_ei_candidates=48)
-        trial = optuna.trial.Trial(study, running[0]._trial_id) if running else study.ask()
-        architecture = suggest(trial, search, baseline, adaptive)
-        scores, _ = score_candidate(data, splits, architecture, training, optimization, search, device,
-            upper_bound=upper_bound, penalty=penalty)
-        trial.set_user_attr("parameters", asdict(architecture))
-        trial.set_user_attr("scores", scores)
-        study.tell(trial, scores["cv_score"])
-        write_csv(cv_path, [dict(trial=t.number, **t.user_attrs["parameters"], **t.user_attrs["scores"])
-                           for t in study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))])
-        print(f"{method} {data.case.id}: trial {len(completed)+1}/{search.trials}, NLL={scores['cv_score']:.7g}", flush=True)
-    rows = [dict(trial=t.number, **t.user_attrs["parameters"], **t.user_attrs["scores"])
-            for t in study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))]
-    write_csv(cv_path, rows)
-    winner = min(rows, key=lambda row: (row["cv_score"], row["trial"]))
-    storage.remove_session()
-    storage.engine.dispose()
-    return Architecture(**{key: winner[key] for key in asdict(baseline)}), {
-        key: winner[key] for key in ("cv_score", "cv_best_epochs", "refit_epochs", "trial")}
+    try:
+        study = optuna.create_study(study_name=method, direction="minimize", storage=storage, load_if_exists=True)
+        cv_path = folder/"cv_results.csv" if cv_path is None else cv_path
+        if not study.trials:
+            for row in startup(search, baseline, adaptive, search.search_seed+data.case.index):
+                study.enqueue_trial(row)
+        while True:
+            completed = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
+            if len(completed) >= search.trials:
+                break
+            running = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.RUNNING,))
+            if len(running) > 1:
+                raise RuntimeError("study has multiple running trials")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", optuna.exceptions.ExperimentalWarning)
+                study.sampler = optuna.samplers.TPESampler(seed=search.search_seed+1009*data.case.index+len(completed),
+                    n_startup_trials=search.initial_trials, multivariate=True, group=True, n_ei_candidates=48)
+            trial = optuna.trial.Trial(study, running[0]._trial_id) if running else study.ask()
+            architecture = suggest(trial, search, baseline, adaptive)
+            scores = score_candidate(data, splits, architecture, training, optimization, search, device,
+                upper_bound=upper_bound, penalty=penalty)
+            trial.set_user_attr("parameters", asdict(architecture))
+            trial.set_user_attr("scores", scores)
+            study.tell(trial, scores["cv_score"])
+            write_csv(cv_path, [dict(trial=t.number, **t.user_attrs["parameters"], **t.user_attrs["scores"])
+                               for t in study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))])
+            print(f"{method} {data.case.id}: trial {len(completed)+1}/{search.trials}, NLL={scores['cv_score']:.7g}", flush=True)
+        rows = [dict(trial=t.number, **t.user_attrs["parameters"], **t.user_attrs["scores"])
+                for t in study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))]
+        write_csv(cv_path, rows)
+        winner = min(rows, key=lambda row: (row["cv_score"], row["trial"]))
+        return Architecture(**{key: winner[key] for key in asdict(baseline)}), {
+            key: winner[key] for key in ("cv_score", "cv_best_epochs", "refit_epochs", "trial")}
+    finally:
+        storage.remove_session()
+        storage.engine.dispose()
 
 
 def compact_case_outputs(output, case_id, methods):
@@ -241,7 +243,7 @@ def tune_case(args, case, methods, search, baseline, training, optimization):
                     raise ValueError("selection cache mismatch")
                 selected[method] = (Architecture(**saved["parameters"]), saved["scores"])
             else:
-                selected[method] = search_method(folder/method, request_hash, data, splits, method,
+                selected[method] = search_method(folder/method, data, splits, method,
                     search, baseline, training, optimization, args.device, upper_bound=upper_bound,
                     penalty=args.penalty if method == METHODS[1] else "partition_kl",
                     cv_path=args.output_dir/method/case.id/"cv_results.csv")
@@ -256,7 +258,7 @@ def tune_case(args, case, methods, search, baseline, training, optimization):
                     raise ValueError("matched selection cache mismatch")
                 scores = saved["scores"]
             else:
-                scores, _ = score_candidate(data, splits, architecture,
+                scores = score_candidate(data, splits, architecture,
                     training, replace(optimization, learn_splits=False), search, args.device,
                     upper_bound=upper_bound, penalty=args.penalty)
                 scores = dict(scores, trial=-1)

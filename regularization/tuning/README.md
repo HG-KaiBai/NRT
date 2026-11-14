@@ -19,9 +19,9 @@ old fold caches from completed cases while preserving their final outputs.
 
 All CV folds and methods share `U=max(finite L/R endpoints)` computed from the
 outer 80% training pool before search. The outer test set and true event times do
-not determine the body horizon. The root probability split at U separates the
-whole body from the tail, and subsequent splits partition only the body. Old
-finite-support and terminal-tail caches/checkpoints are incompatible; use new
+not determine the body horizon. The tree partitions `(0,U]`; the final probability
+output splits the rightmost leaf into its body mass and the tail beyond U. Old
+finite-support and root-tail caches/checkpoints are incompatible; use new
 output directories when changing the protocol:
 
 ```bash

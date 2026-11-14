@@ -1,22 +1,15 @@
-"""Endpoint, aggregation, pairing and historical-refit regression checks."""
+"""Body-tail endpoint metrics and summary regression checks."""
 import csv
-from dataclasses import asdict
-import json
 import math
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
 
 import torch
 
 from . import simulation as sim
-from .compare_structures import compare
-from ..unified_nll.nll_cv_train import NLLCVOptimization
-from ..unified_nll.train import TrainingConfig
-from ..unified_nll.tuning_model import Architecture
-from ..workflow import METHODS, select_cases, source_hash
+from ..workflow import METHODS, select_cases
 
 
 class TauBiasTests(unittest.TestCase):
@@ -88,58 +81,6 @@ class TauBiasTests(unittest.TestCase):
             self.assertEqual(sim.summarize(output, [case], METHODS, 2), ([case.id], []))
             sim.summarize(output, [case], METHODS, 2, metric="survival_tau_absolute_bias", allow_incomplete=True)
             self.assertEqual(self.read_table(path)[-2][METHODS[0]], "")
-
-    def test_cross_structure_comparison_checks_paired_data(self):
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            runs = {name: root/name for name in ("finite", "body_tail", "root_tail")}
-            for run in runs.values():
-                case = self.records(run)
-            self.assertEqual(compare(runs, root/"comparison", [case], METHODS, 2), [])
-            rows = self.read_table(root/"comparison/tables_tau_absolute_bias"/f"{case.id}.csv")
-            self.assertEqual(len(rows[-1]), 10)
-            self.assertAlmostEqual(float(rows[-2]["finite/"+METHODS[0]]), .2)
-            path = sim.result_path(runs["root_tail"], METHODS[0], case, 2)
-            saved = json.loads(path.read_text())
-            saved["dataset_sha256"] = "unpaired"
-            sim.atomic_json(path, saved)
-            with self.assertRaisesRegex(ValueError, "different data"):
-                compare(runs, root/"comparison", [case], METHODS, 2)
-
-    def test_backfill_refits_preserves_sse_and_resumes_without_fitting(self):
-        with TemporaryDirectory() as tmp:
-            args = SimpleNamespace(output_dir=Path(tmp), n_samples=40, base_seed=123, grid_size=8, device="cpu")
-            case = select_cases("ph_right_q0.2")[0]
-            method = METHODS[0]
-            spec = dict(n_samples=40, base_seed=123, source_sha256=source_hash(), tuning_hash="frozen",
-                parameters=asdict(Architecture(depth=2, x_dim=6, private_width=4, private_layers=1,
-                                               shared_width=4, shared_layers=1, regularization_strength=0.)),
-                training_config=asdict(TrainingConfig(epochs=2, batch_size=16, cuda_graphs=False)),
-                optimization=asdict(NLLCVOptimization(warmup_epochs=0, learn_splits=False)),
-                refit_epochs=2, penalty="partition_kl", tau=4.5, mu=0., r=None)
-            # Recreate the old driver's request format with the actual numerical model.
-            with patch.object(sim, "simulation_source_hash", return_value=sim.LEGACY_SIMULATION_SHA256):
-                old = sim.fit_replication(args, method, case, 1, spec)
-            self.assertEqual(old["status"], "ok", old.get("error"))
-            old = {k: v for k, v in old.items() if not k.startswith("survival_tau") and k != "tau_bias_evaluation"}
-            path = sim.result_path(args.output_dir, method, case, 1)
-            sim.atomic_json(path, old)
-            updated = sim.backfill_tau_bias(args, method, case, 1, spec)
-            self.assertTrue(sim.has_tau_bias(updated), updated.get("tau_bias_evaluation"))
-            for key, value in old.items():
-                self.assertEqual(updated[key], value, key)
-            self.assertAlmostEqual(updated["tau_bias_evaluation"]["refit_sse_difference"], 0.)
-            with patch.object(sim, "fit_raw_time_kl", side_effect=AssertionError("must reuse")):
-                self.assertEqual(sim.backfill_tau_bias(args, method, case, 1, spec), updated)
-            old["dataset_sha256"] = "wrong"
-            sim.atomic_json(path, old)
-            with patch.object(sim, "fit_raw_time_kl", side_effect=AssertionError("must validate before fitting")):
-                invalid = sim.backfill_tau_bias(args, method, case, 1, spec)
-            self.assertEqual(invalid["status"], "ok")
-            self.assertEqual(invalid["average_grid_sse"], old["average_grid_sse"])
-            self.assertEqual(invalid["tau_bias_evaluation"]["status"], "error")
-            self.assertIn("data do not match", invalid["tau_bias_evaluation"]["error"])
-
 
 if __name__ == "__main__":
     unittest.main()

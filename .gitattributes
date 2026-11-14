@@ -1,0 +1,3 @@
+# Keep executable scripts and numerical source hashes stable across Windows/Fir.
+*.sh text eol=lf
+/regularization/**/*.py text eol=lf

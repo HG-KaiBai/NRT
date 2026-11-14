@@ -1,4 +1,4 @@
-"""Raw-time NRT with a root body/tail split and a finite body subtree."""
+"""Raw-time NRT with a body tree and a final rightmost-leaf split at tau."""
 import math
 from typing import NamedTuple
 
@@ -40,7 +40,7 @@ class RawTreeState(NamedTuple):
 
 
 class RawGeometry(Tree):
-    """Root logit first, then breadth-first body logits; cuts are body-only.
+    """Breadth-first body logits, then the terminal tail logit; cuts are body-only.
 
     ``depth`` counts body levels, excluding the fixed split at tau.
     """
@@ -57,27 +57,24 @@ class RawGeometry(Tree):
         # Geometry is computed in float64; network and log masses stay float32.
         lower = torch.zeros((len(logits), 1), device=logits.device, dtype=torch.float64)
         upper = torch.ones_like(lower) * self.upper_bound
-        # Split at tau before partitioning (0, tau]. The right child is the
-        # terminal tail; the left child's mass is shared by every body path.
-        log_mass = F.logsigmoid(logits[:, :1])
-        tail_mass = F.logsigmoid(-logits[:, 0])
+        log_mass = logits.new_zeros((len(logits), 1))
         for level in range(self.depth):
             start, stop = 2**level - 1, 2**(level + 1) - 1
             reserved = 2**(self.depth-level-1) * self.min_leaf_width * self.upper_bound
             cut = lower + reserved + (upper-lower-2*reserved) * rho[:, start:stop].double()
             lower = torch.stack((lower, cut), dim=-1).flatten(1)
             upper = torch.stack((cut, upper), dim=-1).flatten(1)
-            branch = logits[:, start+1:stop+1]
+            branch = logits[:, start:stop]
             log_mass = torch.stack((log_mass+F.logsigmoid(branch),
                                     log_mass+F.logsigmoid(-branch)), dim=-1).flatten(1)
-        return RawTreeState(lower, upper, log_mass, tail_mass)
+        # The last output splits only the rightmost leaf at the fixed horizon.
+        last_mass, tail_logit = log_mass[:, -1:], logits[:, -1:]
+        body_mass = torch.cat((log_mass[:, :-1], last_mass + F.logsigmoid(tail_logit)), dim=-1)
+        tail_mass = (last_mass + F.logsigmoid(-tail_logit)).squeeze(-1)
+        return RawTreeState(lower, upper, body_mass, tail_mass)
 
-    def loglik(self, state, left, right, exact, log_jacobian):
-        """Root-weighted body density/overlap plus the root's tail probability.
-
-        Body masses already contain P(T <= tau | x); the tail contributes
-        P(T > tau | x) only when the observation includes the entire tail.
-        """
+    def loglik(self, state, left, right, exact):
+        """Body density/overlap plus tail mass for observations with R=inf."""
         width = state.width
         inside = (left[:, None] > state.lower) & (left[:, None] <= state.upper)
         overlap = (torch.minimum(state.upper, right[:, None])
@@ -106,7 +103,7 @@ class RawTimeKLTree(NLLCVTree):
             raise ValueError("support must be positive and finite")
         if penalty not in PENALTIES:
             raise ValueError(f"penalty must be one of {PENALTIES}")
-        super().__init__(architecture, 1., optimization)
+        super().__init__(architecture, optimization)
         self.tree = RawGeometry(architecture, upper_bound)
         self.mass_head = nn.Linear(architecture.private_width, self.tree.n_internal + 1)
         nn.init.zeros_(self.mass_head.weight)
@@ -130,7 +127,7 @@ class RawTimeKLTree(NLLCVTree):
         # In particular, an exact t > tau becomes the censored set (tau, inf).
         left = torch.minimum(left, self.upper_bound)
         right = torch.where(right > self.upper_bound, torch.inf, right)
-        return Observations(x, left, right, left == right, torch.zeros_like(left))
+        return Observations(x, left, right, left == right)
 
     def terms(self, observations):
         state = self(observations.x)

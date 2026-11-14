@@ -1,7 +1,6 @@
-"""Preserved NLL CV optimization, adapted to the local raw-time KL tree.
+"""NLL CV optimization and frozen-epoch refits for the raw-time KL tree.
 
-The training loop is copied from unified_nll/nll_cv_train.py. Validation
-chooses only fold checkpoints; full-pool fits accept only frozen epochs.
+Validation chooses only fold checkpoints; full-pool fits accept only frozen epochs.
 """
 import math
 import torch

@@ -1,0 +1,4 @@
+# Exact Python inventory captured from the current Fir server on 2026-10-21.
+# Requires CPython 3.14.2 and the matching native/Alliance builds.
+# See ENVIRONMENT_REPLICATION.md for R, native libraries, and verification.
+-r environment/fir-20261021/python-requirements.txt

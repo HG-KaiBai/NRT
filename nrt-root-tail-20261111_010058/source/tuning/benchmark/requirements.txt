@@ -1,0 +1,2 @@
+# All NRT workflows use the exact current-server Python environment.
+-r ../../requirements.txt

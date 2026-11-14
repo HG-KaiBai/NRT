@@ -10,11 +10,18 @@ Data comes from `workflow.generate`, sharing benchmark seeds, tau, and the 80/20
 split. Selected parameters, complete training settings, frozen refit epochs, and
 tau are exported to `output/hyper_para/<method>.csv` for simulation.
 
+Each method/case retains only `cv_results.csv`, `selection.json`, `result.json`,
+and `history.json` (the final refit's history), plus the top-level summaries and
+hyperparameter CSVs. No individual trial/fold results or fold histories are saved.
+An unfinished search uses one temporary SQLite database to resume completed
+trials; it is removed after final outputs are complete. `--summarize` also removes
+old fold caches from completed cases while preserving their final outputs.
+
 All CV folds and methods share `U=max(finite L/R endpoints)` computed from the
 outer 80% training pool before search. The outer test set and true event times do
-not determine the body horizon. A final probability split at U separates the
-rightmost body interval from the tail. Old finite-support caches and checkpoints
-are incompatible; use new
+not determine the body horizon. The root probability split at U separates the
+whole body from the tail, and subsequent splits partition only the body. Old
+finite-support and terminal-tail caches/checkpoints are incompatible; use new
 output directories when changing the protocol:
 
 ```bash

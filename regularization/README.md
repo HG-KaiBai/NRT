@@ -73,16 +73,20 @@ lambda_n = a/sqrt(n_fit)
 objective = mean(observed-data NLL) + lambda_n * mean(R(x))
 ```
 
-The final probability output splits only the original rightmost leaf's mass at U:
-`pi_last = pi_tilde_last * sigmoid(logit_tail)` and
-`s = pi_tilde_last * sigmoid(-logit_tail)`. All other leaf masses are unchanged,
-and body masses plus s sum to one. There is no extra learned cut or tail width;
-the partition penalty uses only body widths.
+The first probability output splits the root at U into the whole body and the
+terminal tail: `p_body = sigmoid(logits[:, 0])` and `s = sigmoid(-logits[:, 0])`.
+The remaining K-1 probability outputs follow breadth-first order in a body subtree
+with `depth` levels on `(0,U]`, producing conditional body masses `pi_tilde_k` that sum
+to one. Every body mass is `pi_k = p_body * pi_tilde_k`, so body masses plus s
+sum to one. Here depth counts only body levels, excluding the root body/tail split.
+There is no extra learned cut or tail width; the partition penalty uses only body
+widths. Network dimensions, initialization, and the fitting procedure are unchanged.
 
 Exact events use the density with terminal intervals always `(a,b]`: a cut point
 belongs to its left interval, U belongs to the last body interval, and zero has
-no body density. Censored observations use body overlap probabilities, plus s
-when R=inf. In particular, `(U,inf)` has likelihood s and `S(U)=s`.
+no body density. With `q_k` the exact density or interval-overlap fraction in leaf k,
+the likelihood is `p_body * sum_k(pi_tilde_k * q_k) + s * I(R=inf)`.
+In particular, `(U,inf)` has likelihood s and `S(U)=s`.
 The tail's internal distribution is unspecified. Observation preparation maps
 `L` to `min(L,U)` and any `R>U` to infinity, so an exact event beyond U becomes
 `(U,inf)` and an interval crossing U includes the whole tail. This coarsening also
@@ -157,10 +161,11 @@ The full default tuning run requires `29 * (2*200*4 + 4) = 46516` CV fits and
 87 final fits. Use the JSON supplied through `--search-space` to change the
 `search` and `baseline` fields; the baseline must lie within the search space.
 Use a new output directory after changing model, search, training, or generation
-settings; fingerprint checks reject old caches. The body/tail change also changes
-source fingerprints and the probability-head checkpoint shape. Keep existing
-outputs in their original directory and refit in a new directory; old finite-support
-results and checkpoints do not describe this model.
+settings; fingerprint checks reject old caches. Moving the body/tail split to the
+root changes source fingerprints and the meaning/order of probability outputs,
+even though head dimensions match the previous terminal-tail model. Keep existing
+outputs in their original directory and refit in a new directory; neither old
+finite-support nor terminal-tail results/checkpoints describe this model.
 
 ## Part 2: simulation testing
 
@@ -178,7 +183,7 @@ results and checkpoints do not describe this model.
 5. Save one resumable JSON file per fit. Reuse successful results when the request
    matches; retry failed records.
 6. When a worker finishes, check the shared JSON files and automatically generate
-   SSE tables for complete cases. By default, publish only after all three methods
+   SSE and S(tau) absolute-bias tables for complete cases. By default, publish only after all three methods
    finish. For a single-method run, use `--summary-methods` to specify which methods
    the summary waits for.
 
@@ -188,7 +193,13 @@ SSE matches the existing evaluation: a uniform 256-point grid over
 `mean_subjects(sum_grid((S_hat-S_true)**2))`. It is neither divided by the number
 of grid points nor multiplied by the integration step size. Summary SD uses the
 sample standard deviation (n−1). The true data-generating distribution is used
-only to evaluate SSE.
+only to evaluate the held-out metrics. S(tau) absolute bias is
+`mean_subjects(abs(S_hat(tau|x)-S_true(tau|x)))`, with tau equal to the maximum
+finite observed training endpoint for every structure, including exact cases.
+It takes the absolute value before averaging subjects. This is distinct from the
+generator's saved censoring tau and the finite model's padded support bound.
+Its replication mean and sample SD are reported like SSE. See the
+[testing guide](testing/README.md) for the three-structure historical backfill and comparison.
 
 ## Running the workflow
 
@@ -300,9 +311,7 @@ regularization/
 ├── tuning/
 │   ├── main.py, tune_nll.sh
 │   └── output/
-│       ├── cases/<case_id>.json
-│       ├── studies/<case_id>/request.json, folds.json
-│       ├── studies/<case_id>/<method>/study.sqlite3, cv_results.csv, fold_cache/
+│       ├── <method>/<case_id>/cv_results.csv
 │       ├── <method>/<case_id>/selection.json, result.json, history.json
 │       ├── hyper_para/<method>.csv
 │       └── <method>_summary.csv
@@ -311,6 +320,7 @@ regularization/
     └── output/
         ├── <method>/<case_id>/replication_0001.json ... replication_0500.json
         ├── tables/<case_id>.csv
+        ├── tables_tau_absolute_bias/<case_id>.csv
         └── censoring_summary.csv
 ```
 
@@ -323,9 +333,21 @@ the retained benchmark hyperparameter CSV files. Each case's SSE table has
 `censoring_summary.csv` deduplicates by dataset, counting each case/replication
 only once across the three methods.
 
+Tuning stores no per-trial or per-fold files. Each completed candidate updates the
+method's single `cv_results.csv`; the matched control has one CV row. Fold records
+and histories stay in memory. The three retained JSON files describe the selected
+configuration, final fitted result, and final refit's history.
+
+During an unfinished search only, `studies/<case_id>/` contains a request manifest
+and one SQLite database per searched method. Completed trials resume from that
+database; an interrupted trial reruns its folds. Once the requested methods have
+their final outputs, databases and temporary manifests are deleted. Small lock
+files remain for concurrent-run protection. `--summarize` also compacts completed
+cases from the old layout, moving their CV tables and removing fold caches.
+
 Tuning and each simulation use write locks; result JSON and CSV files are replaced
-atomically. After an interruption, resume with the same command: tuning restores
-SQLite and per-fold caches, while testing reuses successful JSON results. Use a
+atomically. After an interruption, resume with the same command: tuning reuses
+completed selections/search trials, while testing reuses successful JSON results. Use a
 new output directory when changing the protocol. Automatic summarization preserves
 existing complete tables if results are missing or failed.
 

@@ -31,7 +31,7 @@ if [[ -n ${SLURM_ARRAY_TASK_ID:-${NLL_TASK_ID:-}} ]]; then
   fi
   SELECTED_METHODS=${METHOD_NAMES[$TASK_ID]}
 fi
-nrt_python regularization.testing.simulation run \
+nrt_python regularization.testing.simulation "${COMMAND:-run}" \
   --methods "$SELECTED_METHODS" --summary-methods "${SUMMARY_METHODS:-all}" \
   --cases "${CASES:-all}" \
   --hyper-dir "${HYPER_DIR:-$NRT_ROOT/regularization/tuning/output/hyper_para}" \

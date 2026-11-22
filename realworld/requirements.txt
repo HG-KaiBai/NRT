@@ -1,2 +1,0 @@
-# Exact simulation Python package/build inventory; use ../runtime.sh for Python/R.
--r ../environment/fir-20261021/python-requirements.txt

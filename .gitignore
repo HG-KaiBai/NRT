@@ -5,5 +5,10 @@ __pycache__/
 *.py[cod]
 *.lock
 reproduction/
-!environment/*.json
-!environment/fir-20261021/*.json
+# Keep the frozen environment and reference configuration required for reproduction.
+!/nrt-29cases-20261113_223129/source/environment/*.json
+!/nrt-29cases-20261113_223129/source/environment/fir-20261021/*.json
+!/nrt-29cases-20261113_223129/submission.json
+!/nrt-29cases-20261113_223129/preflight_configuration.json
+!/nrt-29cases-20261113_223129/environment_validation.json
+realworld/

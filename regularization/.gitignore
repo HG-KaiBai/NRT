@@ -1,8 +1,0 @@
-.deps/
-__pycache__/
-/tuning/output/
-/testing/output/
-/tuning/log/*
-!/tuning/log/.gitkeep
-/testing/log/*
-!/testing/log/.gitkeep

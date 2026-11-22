@@ -1,169 +1,232 @@
-# NRT: regularized likelihood and survival benchmarks
+# NRT: Neural Tree Models for Survival Analysis
 
-`regularization/` is the current NRT implementation. It compares `fixed_nll_cv`,
-`adaptive_nll_cv`, and `fixed_at_adaptive_architecture`. The retired NRT_NLL,
-NRT_Brier, and NRT_2Loss implementations and their results have been removed.
+NRT is a research implementation of neural tree models for conditional survival
+estimation with exact, right-censored, current-status, and interval-censored
+observations. This repository provides a reproducible simulation workflow for
+comparing fixed and adaptive time partitions with established survival models.
 
-The current NRT follows `regularization/NeuralRT2.tex`: the body horizon is the
-maximum finite observed training endpoint. A root probability split separates
-the body from the tail, and a subtree with `depth` levels then partitions the body.
-Retained results below predate this change; use fresh output
-directories and refit to evaluate the current model.
+The reference experiment is
+[`nrt-29cases-20261113_223129`](nrt-29cases-20261113_223129/README.md):
+**29 simulation cases, 500 replications per supported method/case, and 5,000
+observations per dataset**. Its frozen source, environment inventories, tuning
+records, and result tables define the reproduction target.
 
-This working tree retains the code, data, launchers, CPU/GPU preflight checks, and pinned environment
-needed to reproduce these two reference directories:
+[Experiment guide](nrt-29cases-20261113_223129/README.md) ·
+[Environment setup](nrt-29cases-20261113_223129/ENVIRONMENT_REPLICATION.md) ·
+[Benchmark tables](nrt-29cases-20261113_223129/benchmarks/testing/tables/) ·
+[NRT tables](nrt-29cases-20261113_223129/partition_kl/testing/tables/)
 
-- `nrt-29cases-20261021_105101/`: benchmark and partition-KL tuning, simulations,
-  selected hyperparameters, and summaries.
-- `realworld/`: the GT 2011 and Rotterdam workflows, datasets, and saved run
-  `runs/full_co_recur_death_uno_km_20261102/`.
+## Model and comparisons
 
-Both result directories are retained. Unrelated historical outputs, old runtime
-logs, non-preflight tests, notebooks, standalone NRT experiments, and local
-dependency caches were removed.
-Benchmark implementations remain in `tuning/benchmark/` and `testing/benchmark/`;
-the NRT implementation retains its required `regularization/unified_nll/` modules.
+The retained NRT model partitions the observed time range with a neural tree and
+represents probability beyond the training horizon as a separate tail mass.
+The horizon is the largest finite observed training endpoint. In this
+implementation, a final split of the rightmost body leaf separates its body mass
+from the tail. Training uses the observation likelihood, with a partition-KL
+penalty for the adaptive model.
 
-## Reproduce the current NRT workflow
+| NRT variant | Partition and model selection |
+| --- | --- |
+| `fixed_nll_cv` | Fixed partition; architecture selected by cross-validated negative log-likelihood |
+| `adaptive_nll_cv` | Learned partition; architecture and regularization selected by cross-validated negative log-likelihood |
+| `fixed_at_adaptive_architecture` | Fixed-partition control using the adaptive model's selected architecture, with regularization strength set to zero |
 
-Run commands from this repository's root. The tested cluster interpreter is:
+The benchmark implementations support the following observations:
 
-```bash
-source runtime.sh
-"$PY" -m pip check
-"$PY" -m unittest test_preflight test_node_runner -v
-bash regularization/tuning/tune_nll.sh --dry-run
-bash regularization/testing/run_nll.sh --dry-run
+| Method | Exact | Right-censored | Current-status | Interval-censored | Cases |
+| --- | :---: | :---: | :---: | :---: | ---: |
+| NNCDE | ✓ | ✓ | — | — | 15 |
+| DeepSurv | ✓ | ✓ | — | — | 15 |
+| Deep distribution regression | ✓ | — | — | — | 5 |
+| Conditional inference tree (`ctree`) | ✓ | ✓ | ✓ | ✓ | 29 |
+| ICcforest | — | ✓ | ✓ | ✓ | 24 |
+| Cox (`cox`) | ✓ | ✓ | ✓ | ✓ | 29 |
+| Accelerated failure time (`aft`) | ✓ | ✓ | ✓ | ✓ | 29 |
+
+All three NRT variants cover all 29 cases. Together, the benchmark and NRT
+testing stages produce **116,500 replication records**.
+
+## Experiment design
+
+The five data-generating settings are proportional hazards (`ph`), lognormal,
+proportional odds (`po`), and two multimodal settings
+(`multimodal_separate` and `multimodal_closer`).
+
+| Observation scheme | Retained cases |
+| --- | ---: |
+| Exact | 5 |
+| Right-censored | 10 |
+| Current-status | 6 |
+| Interval-censored | 8 |
+| **Total** | **29** |
+
+Censored cases use `q = 0.2` or `0.5`. Both multimodal settings exclude
+current-status cases at both q values and the interval-censored case at q=0.5.
+Exact-case identifiers retain the suffix `q0.2` for consistency; their outcomes
+are fully observed.
+
+The protocol uses an 80/20 train/test split, four-fold cross-validation, base
+seed 123, and a 256-point evaluation grid. Methods share the generated dataset
+and split within each case and replication. Case indices remain fixed after
+exclusions, so their seed assignments do not shift.
+
+| Tuning procedure | Search budget | Training epoch limit |
+| --- | --- | ---: |
+| Fixed and adaptive NRT | 200 trials per searched method/case; 20 initial trials | 200 |
+| NNCDE | 27 grid candidates per case | 200 |
+| DeepSurv | 50 candidate evaluations per case | 1,000 |
+
+The matched NRT control reuses the adaptive architecture without an additional
+architecture search. NRT testing uses the saved refit epoch counts. Detailed
+settings are recorded in the reference experiment's `submission.json` and
+`preflight_configuration.json`.
+
+## Repository layout
+
+```text
+NRT/
+├── README.md
+├── nrt-29cases-20261113_223129/
+│   ├── README.md                    # Reproduction workflow
+│   ├── ENVIRONMENT_REPLICATION.md   # Exact environment setup
+│   ├── SOURCE_SHA256SUMS            # Frozen source checksums
+│   ├── source/                     # Models, generators, tuning, and evaluation
+│   │   ├── regularization/         # NRT implementation
+│   │   ├── tuning/                 # Shared generators and benchmark tuning
+│   │   ├── testing/                # Benchmark testing
+│   │   └── environment/            # Pinned Python/R inventory
+│   ├── launchers/                  # Reference Slurm launchers
+│   ├── environment/                # Environment capture and verification tools
+│   ├── benchmarks/                 # Benchmark tuning and testing outputs
+│   └── partition_kl/               # NRT tuning and testing outputs
+└── realworld/                      # Separate real-world experiments
 ```
 
-The required environment is the **current Fir server snapshot from 2026-10-21**:
-Python 3.14.2 in `~/envs/pt`, R 4.4.0, and all exact package/build versions in
-[environment/fir-20261021](environment/fir-20261021/README.md). Installers for every
-workflow refer to the same root [requirements.txt](requirements.txt); alternate
-Python versions and silently substituted package builds are not reproduction targets.
-Use [ENVIRONMENT_REPLICATION.md](ENVIRONMENT_REPLICATION.md) for both Alliance and
-ordinary Linux servers, offline artifacts, R restoration, and numerical validation.
-Verify a copied environment with `"$PY" environment/verify.py --check-source` after
-loading the runtime. Source and dataset checksums describe the cleaned working
-tree; package versions and builds remain those of the Fir snapshot.
+The simulation workflow uses the reference directory's `source/` tree.
+The instructions below concern that simulation; real-world experiments are
+separate.
 
-The [regularization guide](regularization/README.md) defines the model, support,
-search space, seeds, training protocol, and output schema. Defaults are 29 cases,
-5000 observations, 200 trials per searched method, four CV folds, and 500 simulation
-replications. Tuning uses `123 + case.index*10000`; simulation uses
-`123 + 1000000 + case.index*10000 + replication`. Case indices are stable, including
-historical gaps. Every method shares its data and 80/20 split. Testing reads the
-saved tau, model parameters, optimization settings, and fixed refit epochs.
+## Set up the reference environment
 
-For both `multimodal_separate` and `multimodal_closer`, current status at q=0.2
-and q=0.5 and interval censoring at q=0.5 are excluded: six cases in total.
-Their interval q=0.2, exact, and right-censoring cases remain. All current methods
-use this shared selection; the original seed indices are preserved.
-Use [RERUN_SIMULATIONS.md](RERUN_SIMULATIONS.md) to rerun all simulation methods
-in fresh output directories with the correct job dependencies.
+The recorded runtime uses **Python 3.14.2, R 4.4.0, and
+PyTorch 2.11.0+computecanada**. Full package/build versions, CUDA/cuDNN, native
+libraries, and module settings are recorded in
+[`source/environment/fir-20261021/`](nrt-29cases-20261113_223129/source/environment/fir-20261021/).
+Follow the [environment guide](nrt-29cases-20261113_223129/ENVIRONMENT_REPLICATION.md)
+to restore the pinned environment on another machine. The inventory does not
+include a wheelhouse or container image.
 
-Resume an interrupted 29-case experiment with unchanged source and options:
+With that environment available, start a fresh Bash shell **at the repository
+root**:
 
 ```bash
-sbatch regularization/tuning/tune_nll.sh
-# Submit testing after all tuning tasks succeed, replacing TUNING_JOB_ID:
-sbatch --dependency=afterok:TUNING_JOB_ID regularization/testing/run_nll.sh
+set -euo pipefail
+export NRT_REFERENCE="$PWD/nrt-29cases-20261113_223129"
+export NRT_ROOT="$NRT_REFERENCE/source"
+export PYTHONDONTWRITEBYTECODE=1
+
+# Set NRT_VENV or PY first if the pinned environment uses another location.
+source "$NRT_ROOT/runtime.sh"
+export PY
+
+# runtime.sh changes the working directory to source/.
+sha256sum --quiet -c "$NRT_REFERENCE/SOURCE_SHA256SUMS"
+"$PY" "$NRT_REFERENCE/validate_environment.py"
+"$PY" -m unittest test_preflight test_node_runner
 ```
 
-For an independent full rerun, choose unused output directories for both stages:
+The environment validator checks the recorded runtime and Python/R backends and
+refreshes its validation reports. The original validation accepts additional R
+packages only when they are not loaded by the benchmark backends.
+
+Preview the requested simulation dimensions without fitting models:
 
 ```bash
-OUTDIR="$PWD/reproduction/tuning" sbatch regularization/tuning/tune_nll.sh
-HYPER_DIR="$PWD/reproduction/tuning/hyper_para" OUTDIR="$PWD/reproduction/testing" \
-  sbatch --dependency=afterok:TUNING_JOB_ID regularization/testing/run_nll.sh
+"$PY" -m testing.simulation run --methods NNCDE --dry-run
+"$PY" -m regularization.testing.simulation run --dry-run
 ```
 
-Do not change the search budget or training settings when reproducing full results.
-Small validation commands remain in the [regularization guide](regularization/README.md).
-Their reduced budgets validate execution, not the numerical values of the full experiment.
+These previews report 15 NNCDE cases and 29 cases × 3 NRT methods, each with 500
+replications. They do not establish GPU availability; allocated jobs perform
+CPU/GPU and backend checks before fitting.
 
-Rebuild current summaries without training:
+## Reproduce the reference experiment
+
+Choose the level of reproduction needed:
+
+| Goal | Procedure |
+| --- | --- |
+| Inspect the saved results | Open the benchmark, NRT, and tail-bias CSV tables linked below |
+| Rebuild tables from saved replications | Run the summary commands below |
+| Refit with the selected reference parameters | Follow [Refit using saved parameters](nrt-29cases-20261113_223129/README.md#refit-using-saved-parameters) |
+| Repeat preparation, tuning, and all testing | Follow [Full reproduction](nrt-29cases-20261113_223129/README.md#full-reproduction) |
+
+A full reproduction has the following dependencies:
+
+```mermaid
+flowchart LR
+    P["Prepare benchmark cases"] --> TN["Tune NNCDE"]
+    P --> TD["Tune DeepSurv"]
+    P --> CPU["Test CPU benchmarks"]
+    TN --> N["Test NNCDE"]
+    TD --> D["Test DeepSurv"]
+    T["Tune NRT"] --> R["Test all three NRT variants"]
+```
+
+The [experiment guide](nrt-29cases-20261113_223129/README.md) provides the complete
+Slurm commands, including fresh output directories, job dependencies, and
+relocation of launcher paths. The reference launchers target Fir H100 MIG
+resources and contain absolute paths. The guide creates adapted copies for the
+new run while preserving the frozen numerical source.
+
+## Results and metrics
+
+| Output | Contents |
+| --- | --- |
+| [Benchmark tables](nrt-29cases-20261113_223129/benchmarks/testing/tables/) | 29 CSVs; one column per supported benchmark method |
+| [NRT tables](nrt-29cases-20261113_223129/partition_kl/testing/tables/) | 29 CSVs comparing the three NRT variants |
+| [NRT tail-bias tables](nrt-29cases-20261113_223129/partition_kl/testing/tables_tau_absolute_bias/) | 29 CSVs for survival error at the training horizon |
+
+Each table contains replications 1–500, followed by `average` and
+`standard_deviation` rows. Lower values indicate smaller errors.
+
+The main metric, `average_grid_sse`, sums squared differences between estimated
+and true survival probabilities over the evaluation grid, then averages over
+test subjects. It is **not divided by the number of grid points**. NRT's
+`survival_tau_absolute_bias` averages the absolute survival-probability error
+over test subjects at the largest finite observed training endpoint. That
+endpoint is distinct from the censoring generator's saved `tau`.
+
+To rebuild the saved reference tables, use the environment setup above and run:
 
 ```bash
-"$PY" -m regularization.tuning.main --summarize
-"$PY" -m regularization.testing.simulation summarize
+cd "$NRT_ROOT"
+"$PY" -m testing.simulation summarize \
+  --output-dir "$NRT_REFERENCE/benchmarks/testing" --replications 500
+"$PY" -m regularization.testing.simulation summarize \
+  --output-dir "$NRT_REFERENCE/partition_kl/testing" --replications 500
 ```
 
-Successful results are reused only when fingerprints match. The compatibility
-entry in `environment/source-compatibility.json` applies only to the historical
-cleanup snapshot. The 29-case revision has a new source fingerprint; use fresh
-output directories for the requested rerun.
-Reproducibility across different hardware or package builds is not guaranteed.
+These commands read existing replication JSON files and regenerate the summary
+CSVs without refitting. NRT summarization produces both SSE and tail-bias tables.
+Incomplete or failed replications are reported rather than treated as complete.
 
-## Reproduce benchmarks
+Raw replication JSON files and logs are ignored by the current Git rules.
+Rebuilding tables requires those raw results in addition to the CSVs. A fresh
+simulation instead requires the complete frozen source and environment
+inventories; all datasets are generated from the specified case settings and
+seeds.
 
-| Method | Supported observations | Cases |
-| --- | --- | --- |
-| NNCDE, DeepSurv | exact, right | 15 each |
-| deep_distribution_regression | exact | 5 |
-| ctree, cox, aft | exact, right, current, interval | 29 each |
-| iccforest | right, current, interval | 24 |
+## Reproducibility
 
-Neural tuning and testing remain separate from current NRT:
+The experiment's `SOURCE_SHA256SUMS` identifies the 86 frozen source and
+environment files. Keep those bytes, selected parameters, seeds, search budgets,
+and training settings fixed when comparing with the reference. Use a fresh
+output directory for independent runs; existing results are reused only when
+the workflow's compatibility checks pass.
 
-```bash
-# Prepare all 29 case manifests and tau values, without fitting models:
-bash tuning/prepare_cases.sh
-# Tune each neural method, then run its testing job after that tuning array succeeds:
-nncde_job=$(sbatch --parsable tuning/tune_nncde.sh)
-deepsurv_job=$(sbatch --parsable tuning/tune_deepsurv.sh)
-sbatch --dependency="afterok:${nncde_job%%;*}" testing/run_nncde.sh
-sbatch --dependency="afterok:${deepsurv_job%%;*}" testing/run_deepsurv.sh
-# Other benchmarks need only the prepared cases:
-sbatch testing/run_cpu.sh
-```
-
-To reuse the saved reference parameters, set
-`TUNING_DIR="$PWD/nrt-29cases-20261021_105101/benchmarks/tuning"` and select a
-fresh `OUTDIR` for simulation. NRT parameters are in the reference directory's
-`partition_kl/tuning/hyper_para/`.
-Neural testing defaults to `tuning/output/hyper_para`. Set `TUNING_DIR` to use a
-different tuning output root; its `hyper_para/` and `cases/` are selected together.
-Other benchmarks read only tau from `cases/<case_id>.json`; n, seed, mu, and r come
-from simulation arguments. Pass the same custom `--mu` / `--r` during preparation,
-tuning, and simulation so the saved tau matches the generation protocol.
-
-See [benchmark tuning](tuning/README.md), [benchmark testing](testing/README.md),
-and their backend READMEs for package requirements and controls. R methods require
-Rscript and the relevant survival, icenReg, partykit, and ICcforest packages.
-
-## Reproduce real-world results
-
-Follow [realworld/README.md](realworld/README.md), preserving the reference run's
-`request.json`, frozen `nrt_search_spaces.json`, splits, and training budgets.
-Use a fresh output directory for training. Realworld fingerprints all workflow
-source files, so removing unused modules changes that fingerprint even though
-the retained model code is unchanged. Existing results and their original
-fingerprints remain intact; cleanup does not authorize resuming training into
-the reference directory with a different source inventory.
-
-## Node checks and requeue
-
-Launchers use `runtime.sh`; set `PY` to override the default interpreter and
-`NRT_ROOT` when submitting a relocated project. All current realworld,
-regularization, benchmark tuning/testing, preparation, and summary launchers use
-`node_runner.py` through `nrt_python`. Before work begins, it checks temporary
-storage, CPU tensor/BLAS calculations, selected Python/R backends, and the requested
-GPU's allocation, computation, and synchronization. GPU jobs also check the CPU.
-Preparation and summary commands need only CPU checks; previews skip them.
-
-Python/R module-load failures, failed Python import probes, and node precheck
-failures return 75. `runtime.sh` requests `scontrol requeue` for the current job
-or just its failed array element, up to `NRT_MAX_PYTHON_REQUEUES` (default 4), using
-`SLURM_RESTART_COUNT`. Logs append across restarts. Local runs exit without a Slurm
-request, and a rejected requeue request is reported in stderr. Known propagated
-CUDA availability errors during execution also use 75 via `cuda_retry.py`.
-Model/data errors and out-of-memory errors retain their normal failure status.
-
-These launcher changes leave scientific source fingerprints unchanged. Existing
-completed fits remain reusable under their original experiment settings. All
-batch scripts include `--requeue`; placement on a different node is decided by
-Slurm. To use the same checks in a manual command, load `runtime.sh` and run, for
-example, `nrt_python realworld.run preflight --device cpu`.
-Lock files coordinate concurrent writers and may be recreated during a run. Remove
-stale locks only after all writers have stopped. Python bytecode and locks are ignored by Git.
+The original run configuration and environment reports accompany the results.
+Environment and source checks establish the recorded configuration, while
+agreement across hardware must be assessed from numerical outputs. Differences
+in GPU type, native libraries, floating-point behavior, or package builds can
+change fitted models and scores.

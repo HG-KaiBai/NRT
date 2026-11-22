@@ -1,3 +1,5 @@
-# Keep executable scripts and numerical source hashes stable across Windows/Fir.
+# Use LF for executable scripts outside the frozen source snapshot.
 *.sh text eol=lf
-/regularization/**/*.py text eol=lf
+
+# Preserve every frozen source byte, including original line endings, for SHA256 checks.
+/nrt-29cases-20261113_223129/source/** -text !eol

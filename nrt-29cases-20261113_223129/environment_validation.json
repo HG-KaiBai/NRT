@@ -1,0 +1,204 @@
+{
+  "passed": true,
+  "exact_full_inventory_match": false,
+  "required_existing_python_and_r_versions_match": true,
+  "added_r_packages": [
+    "R package Icens: expected None, got ('1.78.0', '4.4.0', '')",
+    "R package RcppArmadillo: expected None, got ('15.6.2-1', '4.4.0', '')",
+    "R package SurvPT: expected None, got ('0.3.2', '4.4.0', '')",
+    "R package dotCall64: expected None, got ('1.2', '4.4.0', '')",
+    "R package fields: expected None, got ('18.0', '4.4.0', '')",
+    "R package interval: expected None, got ('1.1-1.0', '4.4.0', '')",
+    "R package maps: expected None, got ('3.4.4', '4.4.0', '')",
+    "R package perm: expected None, got ('1.0-0.4', '4.4.0', '')",
+    "R package pracma: expected None, got ('2.4.6', '4.4.0', '')",
+    "R package quadprog: expected None, got ('1.5-8', '4.4.0', '')",
+    "R package spBayesSurv: expected None, got ('1.1.9', '4.4.0', '')",
+    "R package spam: expected None, got ('2.11-4', '4.4.0', '')"
+  ],
+  "review": "Only additional R packages differ; none is loaded by the four benchmark R backends. All previously recorded versions and runtime checks match.",
+  "loaded_r_namespaces": [
+    {
+      "Package": "base",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "class",
+      "Version": "7.3.22"
+    },
+    {
+      "Package": "coda",
+      "Version": "0.19.4.1"
+    },
+    {
+      "Package": "codetools",
+      "Version": "0.2.20"
+    },
+    {
+      "Package": "compiler",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "data.table",
+      "Version": "1.18.6.1"
+    },
+    {
+      "Package": "datasets",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "digest",
+      "Version": "0.6.39"
+    },
+    {
+      "Package": "foreach",
+      "Version": "1.5.2"
+    },
+    {
+      "Package": "Formula",
+      "Version": "1.2.6"
+    },
+    {
+      "Package": "future",
+      "Version": "1.75.0"
+    },
+    {
+      "Package": "future.apply",
+      "Version": "1.20.2"
+    },
+    {
+      "Package": "globals",
+      "Version": "0.19.1"
+    },
+    {
+      "Package": "graphics",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "grDevices",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "grid",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "ICcforest",
+      "Version": "0.5.1"
+    },
+    {
+      "Package": "icenReg",
+      "Version": "2.0.16"
+    },
+    {
+      "Package": "inum",
+      "Version": "1.0.5"
+    },
+    {
+      "Package": "ipred",
+      "Version": "0.9.16"
+    },
+    {
+      "Package": "iterators",
+      "Version": "1.0.14"
+    },
+    {
+      "Package": "lattice",
+      "Version": "0.22.6"
+    },
+    {
+      "Package": "lava",
+      "Version": "1.9.3"
+    },
+    {
+      "Package": "libcoin",
+      "Version": "1.0.13"
+    },
+    {
+      "Package": "listenv",
+      "Version": "1.0.0"
+    },
+    {
+      "Package": "MASS",
+      "Version": "7.3.60.2"
+    },
+    {
+      "Package": "Matrix",
+      "Version": "1.7.0"
+    },
+    {
+      "Package": "methods",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "mvtnorm",
+      "Version": "1.4.2"
+    },
+    {
+      "Package": "nnet",
+      "Version": "7.3.19"
+    },
+    {
+      "Package": "parallel",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "parallelly",
+      "Version": "1.48.0"
+    },
+    {
+      "Package": "partykit",
+      "Version": "1.3.0"
+    },
+    {
+      "Package": "prodlim",
+      "Version": "2026.3.11"
+    },
+    {
+      "Package": "Rcpp",
+      "Version": "1.1.2"
+    },
+    {
+      "Package": "rpart",
+      "Version": "4.1.23"
+    },
+    {
+      "Package": "sandwich",
+      "Version": "3.1.3"
+    },
+    {
+      "Package": "splines",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "stats",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "strucchange",
+      "Version": "1.6.0"
+    },
+    {
+      "Package": "survival",
+      "Version": "3.5.8"
+    },
+    {
+      "Package": "tools",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "utils",
+      "Version": "4.4.0"
+    },
+    {
+      "Package": "zoo",
+      "Version": "1.9.0"
+    }
+  ],
+  "backend_import_preflight": "passed",
+  "preflight_and_node_runner_unit_tests": {
+    "passed": true,
+    "count": 16
+  },
+  "gpu_validation": "Each allocated job performs CPU/GPU prechecks before fitting."
+}

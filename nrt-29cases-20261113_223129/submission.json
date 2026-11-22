@@ -1,0 +1,298 @@
+{
+  "created_at": "2026-11-13T22:31:29.279360-05:00",
+  "project_root": "/home/y679zhao/projects/def-anthree/y679zhao/NRT",
+  "run_root": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129",
+  "source_root": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/source",
+  "git_commit": "6a8807e96746d9d942e4615f2b1cc0d08e11e062",
+  "status": "submitted",
+  "settings": {
+    "n_samples": 5000,
+    "base_seed": 123,
+    "cases": 29,
+    "replications": 500,
+    "grid_size": 256,
+    "nrt_model": "raw_time_body_tail",
+    "nrt_penalty": "partition_kl",
+    "nrt_trials": 200,
+    "nrt_initial_trials": 20,
+    "nrt_cv_folds": 4,
+    "nrt_epochs": 200,
+    "nncde_epochs": 200,
+    "nncde_grid_candidates": 27,
+    "deepsurv_epochs": 1000,
+    "deepsurv_candidates": 50
+  },
+  "source_files": 86,
+  "stages": [
+    {
+      "name": "prepare_cases",
+      "launcher": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/prepare_cases.sh",
+      "environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "dependency": null,
+      "array": null
+    },
+    {
+      "name": "tune_nncde",
+      "launcher": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/tune_nncde.sh",
+      "environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "dependency": "prepare_cases",
+      "array": "0-14%15"
+    },
+    {
+      "name": "tune_deepsurv",
+      "launcher": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/tune_deepsurv.sh",
+      "environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "dependency": "prepare_cases",
+      "array": "0-14%15"
+    },
+    {
+      "name": "test_cpu",
+      "launcher": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/test_cpu.sh",
+      "environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/testing",
+        "SUMMARY_METHODS": "all",
+        "TUNING_DIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "dependency": "prepare_cases",
+      "array": "1-500"
+    },
+    {
+      "name": "test_nncde",
+      "launcher": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/test_nncde.sh",
+      "environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/testing",
+        "SUMMARY_METHODS": "all",
+        "TUNING_DIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "dependency": "tune_nncde",
+      "array": null
+    },
+    {
+      "name": "test_deepsurv",
+      "launcher": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/test_deepsurv.sh",
+      "environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/testing",
+        "SUMMARY_METHODS": "all",
+        "TUNING_DIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "dependency": "tune_deepsurv",
+      "array": null
+    },
+    {
+      "name": "tune_nrt",
+      "launcher": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/tune_nrt.sh",
+      "environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/partition_kl/tuning"
+      },
+      "dependency": null,
+      "array": "0-28%29"
+    },
+    {
+      "name": "test_nrt",
+      "launcher": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/test_nrt.sh",
+      "environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/partition_kl/testing",
+        "SUMMARY_METHODS": "all",
+        "HYPER_DIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/partition_kl/tuning/hyper_para"
+      },
+      "dependency": "tune_nrt",
+      "array": "0-2%3"
+    }
+  ],
+  "jobs": {
+    "prepare_cases": {
+      "job_id": "3954207",
+      "dependency": null,
+      "array": null,
+      "submitted_at": "2026-11-13T22:35:23.672568-05:00",
+      "command": [
+        "sbatch",
+        "--parsable",
+        "--hold",
+        "--export=ALL",
+        "--job-name=nrt29_prepare_cases",
+        "--chdir=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/source",
+        "--output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/prepare_cases-%A_%a.out",
+        "--error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/prepare_cases-%A_%a.err",
+        "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/prepare_cases.sh"
+      ],
+      "output_environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "released": true
+    },
+    "tune_nncde": {
+      "job_id": "3954208",
+      "dependency": "3954207",
+      "array": "0-14%15",
+      "submitted_at": "2026-11-13T22:35:23.699542-05:00",
+      "command": [
+        "sbatch",
+        "--parsable",
+        "--hold",
+        "--export=ALL",
+        "--job-name=nrt29_tune_nncde",
+        "--chdir=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/source",
+        "--output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/tune_nncde-%A_%a.out",
+        "--error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/tune_nncde-%A_%a.err",
+        "--array=0-14%15",
+        "--dependency=afterok:3954207",
+        "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/tune_nncde.sh"
+      ],
+      "output_environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "released": true
+    },
+    "tune_deepsurv": {
+      "job_id": "3954209",
+      "dependency": "3954207",
+      "array": "0-14%15",
+      "submitted_at": "2026-11-13T22:35:23.729965-05:00",
+      "command": [
+        "sbatch",
+        "--parsable",
+        "--hold",
+        "--export=ALL",
+        "--job-name=nrt29_tune_deepsurv",
+        "--chdir=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/source",
+        "--output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/tune_deepsurv-%A_%a.out",
+        "--error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/tune_deepsurv-%A_%a.err",
+        "--array=0-14%15",
+        "--dependency=afterok:3954207",
+        "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/tune_deepsurv.sh"
+      ],
+      "output_environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "released": true
+    },
+    "test_cpu": {
+      "job_id": "3954210",
+      "dependency": "3954207",
+      "array": "1-500",
+      "submitted_at": "2026-11-13T22:35:23.758283-05:00",
+      "command": [
+        "sbatch",
+        "--parsable",
+        "--hold",
+        "--export=ALL",
+        "--job-name=nrt29_test_cpu",
+        "--chdir=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/source",
+        "--output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/test_cpu-%A_%a.out",
+        "--error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/test_cpu-%A_%a.err",
+        "--array=1-500",
+        "--dependency=afterok:3954207",
+        "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/test_cpu.sh"
+      ],
+      "output_environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/testing",
+        "SUMMARY_METHODS": "all",
+        "TUNING_DIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "released": true
+    },
+    "test_nncde": {
+      "job_id": "3954211",
+      "dependency": "3954208",
+      "array": null,
+      "submitted_at": "2026-11-13T22:35:23.797929-05:00",
+      "command": [
+        "sbatch",
+        "--parsable",
+        "--hold",
+        "--export=ALL",
+        "--job-name=nrt29_test_nncde",
+        "--chdir=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/source",
+        "--output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/test_nncde-%A_%a.out",
+        "--error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/test_nncde-%A_%a.err",
+        "--dependency=afterok:3954208",
+        "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/test_nncde.sh"
+      ],
+      "output_environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/testing",
+        "SUMMARY_METHODS": "all",
+        "TUNING_DIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "released": true
+    },
+    "test_deepsurv": {
+      "job_id": "3954212",
+      "dependency": "3954209",
+      "array": null,
+      "submitted_at": "2026-11-13T22:35:23.825489-05:00",
+      "command": [
+        "sbatch",
+        "--parsable",
+        "--hold",
+        "--export=ALL",
+        "--job-name=nrt29_test_deepsurv",
+        "--chdir=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/source",
+        "--output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/test_deepsurv-%A_%a.out",
+        "--error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/test_deepsurv-%A_%a.err",
+        "--dependency=afterok:3954209",
+        "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/test_deepsurv.sh"
+      ],
+      "output_environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/testing",
+        "SUMMARY_METHODS": "all",
+        "TUNING_DIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/benchmarks/tuning"
+      },
+      "released": true
+    },
+    "tune_nrt": {
+      "job_id": "3954213",
+      "dependency": null,
+      "array": "0-28%29",
+      "submitted_at": "2026-11-13T22:35:23.873930-05:00",
+      "command": [
+        "sbatch",
+        "--parsable",
+        "--hold",
+        "--export=ALL",
+        "--job-name=nrt29_tune_nrt",
+        "--chdir=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/source",
+        "--output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/tune_nrt-%A_%a.out",
+        "--error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/tune_nrt-%A_%a.err",
+        "--array=0-28%29",
+        "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/tune_nrt.sh"
+      ],
+      "output_environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/partition_kl/tuning"
+      },
+      "released": true
+    },
+    "test_nrt": {
+      "job_id": "3954214",
+      "dependency": "3954213",
+      "array": "0-2%3",
+      "submitted_at": "2026-11-13T22:35:23.922642-05:00",
+      "command": [
+        "sbatch",
+        "--parsable",
+        "--hold",
+        "--export=ALL",
+        "--job-name=nrt29_test_nrt",
+        "--chdir=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/source",
+        "--output=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/test_nrt-%A_%a.out",
+        "--error=/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/log/test_nrt-%A_%a.err",
+        "--array=0-2%3",
+        "--dependency=afterok:3954213",
+        "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/launchers/test_nrt.sh"
+      ],
+      "output_environment": {
+        "OUTDIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/partition_kl/testing",
+        "SUMMARY_METHODS": "all",
+        "HYPER_DIR": "/home/y679zhao/projects/def-anthree/y679zhao/NRT/nrt-29cases-20261113_223129/partition_kl/tuning/hyper_para"
+      },
+      "released": true
+    }
+  },
+  "verified_after_release_at": "2026-11-13T22:36:00.970824-05:00"
+}

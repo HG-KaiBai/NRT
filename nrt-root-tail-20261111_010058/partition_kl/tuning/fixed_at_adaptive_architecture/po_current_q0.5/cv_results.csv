@@ -1,2 +1,0 @@
-depth,shared_width,shared_layers,private_width,private_layers,regularization_strength,x_dim,split_min,total_width_floor,cv_score,cv_best_epochs,refit_epochs,trial
-6,64,3,64,4,0.0,6,0.1,0.0008,0.47806254029273987,"[70, 60, 90, 75]",73,-1

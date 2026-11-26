@@ -5,7 +5,9 @@ import argparse
 import csv
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
+from functools import lru_cache
 import gc
+import hashlib
 import json
 import math
 import multiprocessing as mp
@@ -28,6 +30,14 @@ from workflow import (
 
 def result_path(output, method, case, replication):
     return output / method / case.id / f'replication_{replication:04d}.json'
+
+
+@lru_cache(maxsize=1)
+def cox_implementation_hash():
+    """Invalidate cached Cox scores when its prediction or fitting code changes."""
+    directory = Path(__file__).parent / 'benchmark' / 'cox'
+    return fingerprint({name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
+                        for name in ('model.py', 'backend.R')})
 
 
 def hyperparameter_paths(args):
@@ -147,6 +157,8 @@ def make_job(args, method, case, replication, spec):
                    replication=replication, data_seed=seed, n_samples=args.n_samples,
                    grid_size=args.grid_size, tau=manifest['tau'], mu=manifest['mu'], r=manifest['r'],
                    parameters=parameters, training_config=training, tuning_hash=source_hash)
+    if method == 'cox':
+        request['implementation_hash'] = cox_implementation_hash()
     return dict(request=request, request_hash=fingerprint(request), case=case,
                 output=result_path(args.output_dir, method, case, replication),
                 device=args.device, threads=args.threads_per_fit, force=args.force)
@@ -302,7 +314,7 @@ def summarize(args, cases, methods, *, complete_only=False, censoring_only=False
         case_incomplete = False
         for method in case_methods:
             results = []
-            group_missing = group_failed = 0
+            group_missing = group_failed = group_stale = 0
             for rep in range(1, args.replications + 1):
                 path = result_path(args.output_dir, method, case, rep)
                 if not path.exists():
@@ -313,6 +325,10 @@ def summarize(args, cases, methods, *, complete_only=False, censoring_only=False
                     raise ValueError(f'Result identifiers disagree with path: {path}')
                 if result['status'] != 'ok':
                     group_failed += 1
+                    continue
+                if method == 'cox' and result.get('implementation_hash') != cox_implementation_hash():
+                    group_failed += 1
+                    group_stale += 1
                     continue
                 metadata = {key: result[key] for key in ('data_seed', 'n_samples', 'tau', 'mu', 'r', 'right_censoring_rate')}
                 if rep in data_by_replication and data_by_replication[rep] != metadata:
@@ -326,6 +342,9 @@ def summarize(args, cases, methods, *, complete_only=False, censoring_only=False
                 results.append(result)
             missing += group_missing
             failed += group_failed
+            if group_stale:
+                print(f'Outdated Cox results for {case.id}: {group_stale}; '
+                      'rerun Cox with the current implementation before summarizing', flush=True)
             case_incomplete |= bool(group_missing or group_failed)
             if not results:
                 continue
@@ -368,7 +387,8 @@ def summarize(args, cases, methods, *, complete_only=False, censoring_only=False
             print(f'Simulation summary pending: {len(tables)} case table(s) complete; '
                   'waiting for all requested successful replications', flush=True)
     if not complete_only and (missing or failed) and not args.allow_incomplete:
-        raise RuntimeError(f'{missing} results missing, {failed} failed; use --allow-incomplete for a partial summary')
+        raise RuntimeError(f'{missing} results missing, {failed} failed or outdated; '
+                           'use --allow-incomplete for a partial summary')
     if complete_only and not tables:
         return
     if not completed:

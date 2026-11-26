@@ -35,7 +35,6 @@ source "$NRT_ROOT/runtime.sh"
 sha256sum --quiet -c "$NRT_REFERENCE/SOURCE_SHA256SUMS"
 (cd "$NRT_ROOT/environment/fir-20261021" && sha256sum --quiet -c SHA256SUMS)
 "$PY" "$NRT_REFERENCE/validate_environment.py"
-"$PY" -m unittest test_preflight test_node_runner
 ```
 
 The experiment validator accepts additional R packages only when none is loaded

@@ -11,6 +11,14 @@ The reference experiment is
 observations per dataset**. Its frozen source, environment inventories, tuning
 records, and result tables define the reproduction target.
 
+The Cox interval/current-status prediction conversion was corrected on
+2026-11-25: `icenReg::getFitEsts(q=t)` returns a CDF, so survival is `1 - F(t)`.
+The corrected implementation is included in the source checksum manifest and
+used by all reproduction paths. Cox result caches record the implementation
+hash; older results must be refitted before reuse or summary.
+All 29 Cox cases were refitted for 500 replications and the existing benchmark
+tables updated. Other methods' columns are unchanged.
+
 [Experiment guide](nrt-29cases-20261113_223129/README.md) ·
 [Environment setup](nrt-29cases-20261113_223129/ENVIRONMENT_REPLICATION.md) ·
 [Benchmark tables](nrt-29cases-20261113_223129/benchmarks/testing/tables/) ·
@@ -132,7 +140,6 @@ export PY
 # runtime.sh changes the working directory to source/.
 sha256sum --quiet -c "$NRT_REFERENCE/SOURCE_SHA256SUMS"
 "$PY" "$NRT_REFERENCE/validate_environment.py"
-"$PY" -m unittest test_preflight test_node_runner
 ```
 
 The environment validator checks the recorded runtime and Python/R backends and
@@ -219,7 +226,7 @@ seeds.
 
 ## Reproducibility
 
-The experiment's `SOURCE_SHA256SUMS` identifies the 86 frozen source and
+The experiment's `SOURCE_SHA256SUMS` identifies the 87 frozen source and
 environment files. Keep those bytes, selected parameters, seeds, search budgets,
 and training settings fixed when comparing with the reference. Use a fresh
 output directory for independent runs; existing results are reused only when

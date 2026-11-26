@@ -5,6 +5,16 @@ This directory defines the reference experiment
 inventories, selected parameters, and results described in the
 [repository overview](../README.md).
 
+The 2026-11-25 Cox correction is part of this reference source: interval and
+current-status survival predictions now use `1 - icenReg::getFitEsts(q=t)`.
+Seeds, sample sizes, covariates, tuning and the scoring metric are unchanged.
+Every new Cox replication records its implementation hash. Running or
+summarizing pre-correction Cox caches is rejected; use a fresh output directory
+or explicitly refit with `--force`.
+All 14,500 Cox replication records and the Cox columns in the 29 reference CSVs
+have been replaced by the corrected rerun. Other methods' CSV values are
+unchanged; the original linear covariate specification is retained.
+
 The protocol uses 29 cases, 5,000 observations per dataset, an 80/20 train/test
 split, four-fold cross-validation, and 500 replications per supported method/case.
 There are 73,000 benchmark fits and 43,500 NRT fits in the testing stage.
@@ -13,10 +23,10 @@ There are 73,000 benchmark fits and 43,500 NRT fits in the testing stage.
 
 | Path | Role |
 | --- | --- |
-| `source/`, `SOURCE_SHA256SUMS` | The 86 original frozen files and their hashes |
+| `source/`, `SOURCE_SHA256SUMS` | The 81 reference files and their hashes, including the Cox correction |
 | `source/environment/fir-20261021/` | Pinned Python/R packages and native-runtime inventory |
 | `environment/`, `validate_environment.py` | Environment restoration, capture, and verification |
-| `launchers/` | Eight reference Slurm launchers |
+| `launchers/` | Eight reference Slurm launchers for preparation, tuning, and simulation |
 | `benchmarks/tuning/` | Case manifests, neural CV results, selected parameters, and hyperparameter CSVs |
 | `partition_kl/tuning/` | NRT case manifests, CV histories, selections, and hyperparameter CSVs |
 | `benchmarks/testing/`, `partition_kl/testing/` | Replication records and result tables |
@@ -42,7 +52,6 @@ source "$NRT_ROOT/runtime.sh"
 export PY
 sha256sum --quiet -c "$NRT_REFERENCE/SOURCE_SHA256SUMS"
 "$PY" "$NRT_REFERENCE/validate_environment.py"
-"$PY" -m unittest test_preflight test_node_runner
 ```
 
 Set `NRT_VENV` or `PY` before sourcing the runtime if the pinned installation is

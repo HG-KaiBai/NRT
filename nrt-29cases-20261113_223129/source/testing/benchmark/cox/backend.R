@@ -91,7 +91,8 @@ if (mode == "fit") {
         if (terminal_survival == 0 && grid[[column]] >= support_end) {
           output[, column] <- 0
         } else {
-          output[, column] <- icenReg::getFitEsts(
+          # getFitEsts(q = t) returns F(t | x); this adapter returns S(t | x).
+          output[, column] <- 1 - icenReg::getFitEsts(
             artifact$fit, newdata = newdata, q = grid[[column]]
           )
         }
